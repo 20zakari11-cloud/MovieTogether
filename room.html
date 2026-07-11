@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>غرفة مشاهدة — Movie Together</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- ===================== نافذة إدخال الاسم ===================== -->
+  <div class="modal-overlay" id="join-modal">
+    <div class="modal-card">
+      <div class="ticket-code" id="modal-room-code">غرفة #XXXX</div>
+      <h2>انضم إلى الغرفة</h2>
+      <p class="sub">اختر اسمًا يظهر لبقية المشاهدين في الدردشة</p>
+
+      <label class="field-label" for="username-input">اسمك</label>
+      <input
+        class="field-input"
+        id="username-input"
+        type="text"
+        maxlength="20"
+        placeholder="مثال: أحمد"
+        autocomplete="off"
+      >
+      <div class="form-error" id="username-error"></div>
+
+      <button class="btn-primary" id="join-btn" type="button">دخول الغرفة</button>
+    </div>
+  </div>
+
+  <!-- ===================== رأس الغرفة ===================== -->
+  <header class="room-header">
+    <div class="brand">
+      <span class="brand-mark">🎬</span>
+    </div>
+
+    <div class="room-id-pill">
+      غرفة <b id="room-id-label">----</b>
+    </div>
+
+    <div class="room-actions">
+      <button class="icon-btn" id="copy-link-btn" title="نسخ رابط الغرفة" aria-label="نسخ رابط الغرفة">🔗</button>
+      <a class="icon-btn" href="index.html" title="مغادرة الغرفة" aria-label="مغادرة الغرفة">✕</a>
+    </div>
+  </header>
+
+  <!-- ===================== تخطيط الغرفة ===================== -->
+  <div class="room-layout">
+
+    <!-- ---------- عمود المشغل ---------- -->
+    <div class="player-col">
+
+      <div class="player-wrap">
+        <video id="video-player" controls playsinline></video>
+        <div class="player-empty-state" id="player-empty-state">
+          <div>
+            <div class="ic">🎞️</div>
+            <div>ألصق رابط فيديو (MP4 أو M3U8) بالأسفل لبدء المشاهدة</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="source-bar">
+        <input
+          class="field-input"
+          id="video-url-input"
+          type="text"
+          placeholder="ألصق رابط الفيديو هنا (mp4 / m3u8)…"
+          autocomplete="off"
+        >
+        <button id="load-video-btn" type="button">تحميل</button>
+      </div>
+
+      <div class="sync-status">
+        <span class="dot"></span>
+        <span id="sync-status-text">جاهز — التزامن مع الآخرين سيُفعَّل عند ربط الخادم</span>
+      </div>
+
+      <div class="viewers-row" id="viewers-row">
+        <!-- تُضاف رقاقات المشاهدين هنا ديناميكيًا -->
+      </div>
+    </div>
+
+    <!-- ---------- عمود الدردشة ---------- -->
+    <aside class="chat-col">
+      <div class="chat-head">
+        <h2>الدردشة</h2>
+        <span class="count" id="chat-count">0 رسالة</span>
+      </div>
+
+      <div class="chat-messages" id="chat-messages">
+        <div class="chat-empty" id="chat-empty">لا رسائل بعد — كن أول من يكتب 👋</div>
+      </div>
+
+      <div class="chat-input-row">
+        <input
+          id="chat-input"
+          type="text"
+          placeholder="اكتب رسالة…"
+          maxlength="300"
+          autocomplete="off"
+        >
+        <button class="chat-send-btn" id="chat-send-btn" type="button" aria-label="إرسال">➤</button>
+      </div>
+    </aside>
+
+  </div>
+
+  <div class="copy-toast" id="copy-toast">تم نسخ رابط الغرفة ✓</div>
+
+  <!-- HLS.js من CDN لدعم بث M3U8 -->
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js"></script>
+  <script src="script.js"></script>
+</body>
+</html>
