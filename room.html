@@ -60,6 +60,18 @@
             <div>ألصق رابط فيديو (MP4 أو M3U8) بالأسفل لبدء المشاهدة</div>
           </div>
         </div>
+
+        <!-- شاشة التخزين المؤقت — تظهر قبل بدء التشغيل وأثناء إعادة التخزين -->
+        <div class="buffering-overlay hidden" id="buffering-overlay">
+          <div class="buffering-box">
+            <div class="spinner"></div>
+            <div class="buffering-label" id="buffering-label">جارِ التخزين المؤقت…</div>
+            <div class="buffer-bar-track">
+              <div class="buffer-bar-fill" id="buffer-bar-fill"></div>
+            </div>
+            <div class="buffering-sub" id="buffering-sub">٠ من ٢٥ ثانية</div>
+          </div>
+        </div>
       </div>
 
       <div class="source-bar">
@@ -71,6 +83,43 @@
           autocomplete="off"
         >
         <button id="load-video-btn" type="button">تحميل</button>
+        <button class="icon-btn" id="net-settings-toggle" title="إعدادات الاتصال الضعيف" aria-label="إعدادات الاتصال الضعيف">⚙️</button>
+      </div>
+
+      <!-- ---------- شريط حالة الشبكة ---------- -->
+      <div class="net-status-bar">
+        <label class="switch-row">
+          <input type="checkbox" id="slow-mode-toggle" checked>
+          <span class="switch-track"><span class="switch-thumb"></span></span>
+          <span class="switch-label">وضع الاتصال الضعيف</span>
+        </label>
+
+        <span class="ratio-badge" id="ratio-badge" title="نسبة سرعة التحميل إلى سرعة التشغيل">
+          <span class="dot" id="ratio-dot"></span>
+          <span id="ratio-text">— جارِ القياس</span>
+        </span>
+      </div>
+
+      <!-- ---------- لوحة إعدادات الاتصال الضعيف (مطوية افتراضيًا) ---------- -->
+      <div class="net-settings-panel hidden" id="net-settings-panel">
+        <div class="net-settings-row">
+          <label for="prebuffer-input">التخزين المؤقت قبل بدء التشغيل (ثوانٍ)</label>
+          <input class="field-input small" id="prebuffer-input" type="number" min="5" max="120" step="5" value="25">
+        </div>
+        <div class="net-settings-row">
+          <label for="resume-buffer-input">استئناف التشغيل بعد إعادة التخزين عند (ثوانٍ)</label>
+          <input class="field-input small" id="resume-buffer-input" type="number" min="3" max="60" step="1" value="12">
+        </div>
+
+        <div class="calc-box">
+          <div class="calc-title">حاسبة الجودة المناسبة لسرعتك</div>
+          <div class="net-settings-row">
+            <label for="speed-input">سرعتك التقريبية (كيلوبايت/ثانية)</label>
+            <input class="field-input small" id="speed-input" type="number" min="20" max="2000" step="10" value="180">
+          </div>
+          <button class="btn-mini" id="calc-btn" type="button">احسب الجودة الموصى بها</button>
+          <div class="calc-result" id="calc-result"></div>
+        </div>
       </div>
 
       <div class="sync-status">
