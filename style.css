@@ -578,6 +578,239 @@ input, textarea { font-family: inherit; }
 
 .source-bar button:hover { border-color: var(--gold-dim); }
 
+/* -------------------------------------------------------------------------
+   وضع الاتصال الضعيف — شاشة التخزين المؤقت فوق المشغل
+   ------------------------------------------------------------------------- */
+.buffering-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(6, 7, 10, 0.82);
+  backdrop-filter: blur(3px);
+  display: grid;
+  place-items: center;
+  z-index: 20;
+  transition: opacity var(--dur) var(--ease);
+}
+
+.buffering-overlay.hidden { display: none; }
+
+.buffering-box {
+  text-align: center;
+  padding: 20px;
+  width: 100%;
+  max-width: 260px;
+}
+
+.spinner {
+  width: 34px;
+  height: 34px;
+  margin: 0 auto 14px;
+  border-radius: 50%;
+  border: 3px solid var(--border);
+  border-top-color: var(--gold);
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.buffering-label {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--text);
+  margin-bottom: 12px;
+}
+
+.buffer-bar-track {
+  width: 100%;
+  height: 8px;
+  border-radius: 100px;
+  background: var(--surface-2);
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.buffer-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--gold-dim), var(--gold-bright));
+  border-radius: 100px;
+  transition: width 0.25s linear;
+}
+
+.buffering-sub {
+  margin-top: 8px;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+/* -------------------------------------------------------------------------
+   شريط حالة الشبكة (تحت شريط المصدر)
+   ------------------------------------------------------------------------- */
+.net-status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 16px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-soft);
+  flex-wrap: wrap;
+}
+
+.switch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.switch-row input { position: absolute; opacity: 0; width: 0; height: 0; }
+
+.switch-track {
+  width: 36px;
+  height: 20px;
+  border-radius: 100px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  position: relative;
+  transition: background var(--dur) var(--ease);
+  flex-shrink: 0;
+}
+
+.switch-thumb {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  transition: all var(--dur) var(--ease);
+}
+
+.switch-row input:checked + .switch-track {
+  background: var(--gold-dim);
+  border-color: var(--gold);
+}
+
+.switch-row input:checked + .switch-track .switch-thumb {
+  right: 18px;
+  background: var(--gold-bright);
+}
+
+.ratio-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 5px 12px;
+  border-radius: 100px;
+}
+
+.ratio-badge .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+
+.ratio-badge.good .dot { background: var(--success); }
+.ratio-badge.good { color: var(--success); border-color: rgba(75, 212, 160, 0.3); }
+.ratio-badge.bad .dot { background: var(--live); animation: pulse 1.4s ease-in-out infinite; }
+.ratio-badge.bad { color: var(--live); border-color: rgba(229, 72, 77, 0.3); }
+
+/* -------------------------------------------------------------------------
+   لوحة إعدادات الاتصال الضعيف
+   ------------------------------------------------------------------------- */
+.net-settings-panel {
+  padding: 16px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.net-settings-panel.hidden { display: none; }
+
+.net-settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.net-settings-row label {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  flex: 1;
+}
+
+.field-input.small {
+  width: 88px;
+  flex-shrink: 0;
+  padding: 8px 10px;
+  text-align: center;
+}
+
+.calc-box {
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.calc-title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 0.85rem;
+  color: var(--gold-bright);
+}
+
+.btn-mini {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  font-weight: 600;
+  transition: border-color var(--dur) var(--ease);
+}
+
+.btn-mini:hover { border-color: var(--gold-dim); }
+
+.calc-result {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  line-height: 1.7;
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+}
+
+.calc-result:empty { display: none; }
+.calc-result b { color: var(--gold-bright); }
+.calc-result code {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.78rem;
+  direction: ltr;
+  display: inline-block;
+  unicode-bidi: plaintext;
+}
+
 .sync-status {
   display: flex;
   align-items: center;
