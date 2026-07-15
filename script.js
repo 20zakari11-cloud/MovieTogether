@@ -181,6 +181,23 @@
     const loadVideoBtn = document.getElementById('load-video-btn');
     const syncStatusText = document.getElementById('sync-status-text');
 
+    // عناصر وضع الاتصال الضعيف
+    const bufferingOverlay = document.getElementById('buffering-overlay');
+    const bufferingLabel = document.getElementById('buffering-label');
+    const bufferBarFill = document.getElementById('buffer-bar-fill');
+    const bufferingSub = document.getElementById('buffering-sub');
+    const slowModeToggle = document.getElementById('slow-mode-toggle');
+    const ratioBadge = document.getElementById('ratio-badge');
+    const ratioDot = document.getElementById('ratio-dot');
+    const ratioText = document.getElementById('ratio-text');
+    const netSettingsToggle = document.getElementById('net-settings-toggle');
+    const netSettingsPanel = document.getElementById('net-settings-panel');
+    const prebufferInput = document.getElementById('prebuffer-input');
+    const resumeBufferInput = document.getElementById('resume-buffer-input');
+    const speedInput = document.getElementById('speed-input');
+    const calcBtn = document.getElementById('calc-btn');
+    const calcResult = document.getElementById('calc-result');
+
     const chatMessagesEl = document.getElementById('chat-messages');
     const chatEmptyEl = document.getElementById('chat-empty');
     const chatInput = document.getElementById('chat-input');
@@ -291,9 +308,181 @@
       return 'mp4';
     }
 
+    /* -----------------------------------------------------------------
+       وضع الاتصال الضعيف (Low-Bandwidth Mode)
+       -------------------------------------------------------------------
+       فكرته: عدم السماح بالتشغيل إلا بعد تخزين عدد ثوانٍ كافٍ مسبقًا،
+       وإيقاف التشغيل تلقائيًا وإعادة التخزين إذا اقترب المشغل من نفاد
+       ما تم تحميله، بدل أن يتقطّع الفيديو أثناء المشاهدة. كما نقيس نسبة
+       "سرعة التحميل إلى سرعة التشغيل" مباشرة من طول الجزء المخزَّن
+       مؤقتًا (buffered) دون الحاجة لأي طلب شبكة إضافي — وبالتالي يعمل
+       بدقة معقولة حتى مع روابط من خوادم خارجية (CORS). */
+
+    let watchdogTimer = null;
+    let hasStartedOnce = false;   // هل بدأ التشغيل فعليًا مرة واحدة على الأقل
+    let isAutoPaused = false;     // هل الإيقاف الحالي تسبب به المراقب وليس المستخدم
+    let userWantsToPlay = false;  // المستخدم ضغط تشغيل وننتظر التخزين قبل التنفيذ
+    let lastFrontier = 0;
+    let lastFrontierTime = performance.now();
+
+    const LOW_BUFFER_THRESHOLD = 3; // إن قلّ المخزون عن هذا أثناء التشغيل → إيقاف فوري
+
+    function isSlowModeOn() { return slowModeToggle.checked; }
+    function getPrebufferTarget() { return parseFloat(prebufferInput.value) || 25; }
+    function getResumeTarget() { return parseFloat(resumeBufferInput.value) || 12; }
+
+    /** كمية الثواني المخزّنة أمام موضع التشغيل الحالي مباشرة */
+    function getBufferedAhead() {
+      const t = videoEl.currentTime;
+      for (let i = 0; i < videoEl.buffered.length; i++) {
+        if (videoEl.buffered.start(i) - 0.5 <= t && t <= videoEl.buffered.end(i)) {
+          return videoEl.buffered.end(i) - t;
+        }
+      }
+      return 0;
+    }
+
+    /** أقصى نقطة تم تحميلها فعليًا (حافة التحميل) */
+    function getDownloadFrontier() {
+      if (!videoEl.buffered.length) return 0;
+      return videoEl.buffered.end(videoEl.buffered.length - 1);
+    }
+
+    function showBufferingOverlay(label) {
+      bufferingOverlay.classList.remove('hidden');
+      bufferingLabel.textContent = label;
+    }
+
+    function hideBufferingOverlay() {
+      bufferingOverlay.classList.add('hidden');
+    }
+
+    function updateBufferingProgress(current, target) {
+      const pct = Math.max(0, Math.min(100, (current / target) * 100));
+      bufferBarFill.style.width = pct + '%';
+      bufferingSub.textContent = `${Math.floor(current)} من ${Math.floor(target)} ثانية`;
+    }
+
+    function updateRatioBadge(ratio) {
+      if (!isFinite(ratio) || ratio < 0) return;
+      ratioBadge.classList.remove('good', 'bad');
+      if (ratio >= 1.1) {
+        ratioBadge.classList.add('good');
+        ratioText.textContent = `التحميل أسرع من التشغيل (×${ratio.toFixed(1)})`;
+      } else if (ratio <= 0.85) {
+        ratioBadge.classList.add('bad');
+        ratioText.textContent = `التحميل أبطأ من التشغيل (×${ratio.toFixed(1)}) — يُتوقع تقطيع`;
+      } else {
+        ratioText.textContent = `التحميل قريب من سرعة التشغيل (×${ratio.toFixed(1)})`;
+      }
+    }
+
+    function startWatchdog() {
+      stopWatchdog();
+      lastFrontier = getDownloadFrontier();
+      lastFrontierTime = performance.now();
+      watchdogTimer = setInterval(watchdogTick, 1000);
+    }
+
+    function stopWatchdog() {
+      if (watchdogTimer) clearInterval(watchdogTimer);
+      watchdogTimer = null;
+    }
+
+    function watchdogTick() {
+      if (!videoEl.src && !videoEl.currentSrc) return;
+
+      // --- قياس نسبة التحميل إلى التشغيل ---
+      const now = performance.now();
+      const frontier = getDownloadFrontier();
+      const dtReal = (now - lastFrontierTime) / 1000;
+      if (dtReal > 0.2) {
+        const ratio = (frontier - lastFrontier) / dtReal;
+        updateRatioBadge(ratio);
+        lastFrontier = frontier;
+        lastFrontierTime = now;
+      }
+
+      if (!isSlowModeOn()) {
+        if (isAutoPaused) { isAutoPaused = false; userWantsToPlay = false; hideBufferingOverlay(); }
+        return;
+      }
+
+      const bufferedAhead = getBufferedAhead();
+
+      // المستخدم بانتظار وصول التخزين للحد المطلوب (أولي أو بعد انقطاع)
+      if (userWantsToPlay && isAutoPaused) {
+        const target = hasStartedOnce ? getResumeTarget() : getPrebufferTarget();
+        updateBufferingProgress(bufferedAhead, target);
+        if (bufferedAhead >= target) {
+          isAutoPaused = false;
+          videoEl.play().catch(() => {});
+        }
+        return;
+      }
+
+      // يشغّل الآن لكن المخزون قارب على النفاد → إيقاف تلقائي لإعادة التخزين
+      const nearEnd = isFinite(videoEl.duration) && frontier >= videoEl.duration - 0.5;
+      if (!videoEl.paused && bufferedAhead < LOW_BUFFER_THRESHOLD && !nearEnd) {
+        isAutoPaused = true;
+        userWantsToPlay = true;
+        videoEl.pause();
+        showBufferingOverlay('إعادة التخزين المؤقت — الاتصال بطيء…');
+        updateBufferingProgress(bufferedAhead, getResumeTarget());
+      }
+    }
+
+    // اعتراض محاولات التشغيل لتطبيق بوّابة التخزين المسبق
+    videoEl.addEventListener('play', function () {
+      if (suppressPlaybackEvents) return;
+
+      if (isSlowModeOn()) {
+        const bufferedAhead = getBufferedAhead();
+        const needed = hasStartedOnce ? getResumeTarget() : getPrebufferTarget();
+        if (bufferedAhead < needed) {
+          isAutoPaused = true;
+          userWantsToPlay = true;
+          videoEl.pause();
+          showBufferingOverlay(hasStartedOnce ? 'إعادة التخزين المؤقت — الاتصال بطيء…' : 'جارِ التجهيز للمشاهدة السلسة…');
+          updateBufferingProgress(bufferedAhead, needed);
+          return;
+        }
+      }
+
+      isAutoPaused = false;
+      userWantsToPlay = false;
+      hasStartedOnce = true;
+      hideBufferingOverlay();
+      broadcastPlay(videoEl.currentTime);
+    });
+
+    /* -----------------------------------------------------------------
+       تحميل مصدر الفيديو (MP4 أو HLS) مع إعدادات مهيّأة لسرعات منخفضة
+       ----------------------------------------------------------------- */
+
+    function buildHlsConfig() {
+      if (!isSlowModeOn()) return {};
+      return {
+        // تخزين أعمق مقدمًا بدل ملاحقة اللحظة الحالية فقط
+        maxBufferLength: 60,
+        maxMaxBufferLength: 180,
+        // ابدأ بأقل جودة متاحة لتفادي تقطيع أولي، ثم اسمح لـ hls.js بالتكيّف
+        startLevel: 0,
+        capLevelToPlayerSize: true,
+        // تقدير مبدئي متحفظ للسرعة (بالبت/ث) يقارب ١٥٠ كيلوبايت/ث
+        abrEwmaDefaultEstimate: 1200000
+      };
+    }
+
     function loadVideoSource(url, persist) {
       if (!url) return;
       const type = detectVideoType(url);
+
+      // إعادة ضبط حالة مراقب الاتصال الضعيف عند كل تحميل جديد
+      hasStartedOnce = false;
+      isAutoPaused = false;
+      userWantsToPlay = false;
+      hideBufferingOverlay();
 
       // تفكيك أي جلسة HLS سابقة قبل تحميل مصدر جديد
       if (hlsInstance) {
@@ -303,11 +492,11 @@
 
       if (type === 'hls') {
         if (window.Hls && window.Hls.isSupported()) {
-          hlsInstance = new Hls();
+          hlsInstance = new Hls(buildHlsConfig());
           hlsInstance.loadSource(url);
           hlsInstance.attachMedia(videoEl);
         } else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
-          // دعم أصلي (Safari / iOS)
+          // دعم أصلي (Safari / iOS) — لا يوفر هذا المسار ضبط تخزين مؤقت مخصص
           videoEl.src = url;
         } else {
           syncStatusText.textContent = 'المتصفح لا يدعم بث M3U8';
@@ -319,6 +508,7 @@
 
       emptyState.classList.add('hidden');
       syncStatusText.textContent = 'تم تحميل الفيديو — جاهز للمشاهدة';
+      startWatchdog();
 
       if (persist) {
         RoomStore.setVideo(roomId, url, type);
@@ -330,6 +520,32 @@
       const url = videoUrlInput.value.trim();
       if (!url) return;
       loadVideoSource(url, true);
+    });
+
+    // إظهار/إخفاء لوحة إعدادات الاتصال الضعيف
+    netSettingsToggle.addEventListener('click', function () {
+      netSettingsPanel.classList.toggle('hidden');
+    });
+
+    // حاسبة الجودة الموصى بها بناءً على السرعة التقريبية
+    calcBtn.addEventListener('click', function () {
+      const kbps = parseFloat(speedInput.value);
+      if (!kbps || kbps <= 0) {
+        calcResult.textContent = 'أدخل سرعة صالحة أولًا';
+        return;
+      }
+      // نترك هامشًا ٢٥٪ لتذبذب الشبكة ورسائل الدردشة، ونحوّل لكيلوبت/ث
+      const recommendedKbps = Math.round(kbps * 8 * 0.75);
+      let resNote;
+      if (recommendedKbps >= 1200) resNote = 'دقة 720p مناسبة غالبًا';
+      else if (recommendedKbps >= 600) resNote = 'دقة 480p هي الأنسب';
+      else resNote = 'دقة 360p أو أقل لتفادي التقطيع';
+
+      calcResult.innerHTML =
+        `بمعدل <b>${kbps} كيلوبايت/ث</b>، معدل البت الموصى به للفيديو تقريبًا ` +
+        `<b>${recommendedKbps} كيلوبت/ث</b> — ${resNote}.<br>` +
+        `أمر ffmpeg مقترح لإعادة الترميز:<br>` +
+        `<code>ffmpeg -i in.mp4 -vf scale=-2:480 -c:v libx264 -b:v ${recommendedKbps}k -c:a aac -b:a 96k out.mp4</code>`;
     });
 
     /* ---- دوال التزامن المستقبلي للتشغيل (تشغيل/إيقاف/تقديم) ----
@@ -365,13 +581,12 @@
       suppressPlaybackEvents = false;
     }
 
-    videoEl.addEventListener('play', function () {
-      if (suppressPlaybackEvents) return;
-      broadcastPlay(videoEl.currentTime);
-    });
+    // ملاحظة: مستمع "play" الفعلي (مع بوّابة التخزين المسبق لوضع الاتصال
+    // الضعيف) مُعرَّف أعلاه مباشرة بعد تعريف الدوال المساعدة للمراقب.
 
     videoEl.addEventListener('pause', function () {
       if (suppressPlaybackEvents) return;
+      if (isAutoPaused) return; // إيقاف تسبب به المراقب (إعادة تخزين) — لا نبثّه
       broadcastPause(videoEl.currentTime);
     });
 
