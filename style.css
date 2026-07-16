@@ -811,6 +811,46 @@ input, textarea { font-family: inherit; }
   unicode-bidi: plaintext;
 }
 
+.calc-note {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  line-height: 1.7;
+}
+
+.calc-note b { color: var(--gold-bright); }
+
+.cache-usage {
+  font-size: 0.82rem;
+  color: var(--gold-bright);
+  font-weight: 600;
+}
+
+.chunk-progress {
+  padding: 10px 16px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.chunk-progress.hidden { display: none; }
+
+.chunk-progress .track {
+  margin-top: 6px;
+  height: 6px;
+  border-radius: 100px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.chunk-progress .fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--gold-dim), var(--gold-bright));
+  transition: width 0.3s ease;
+}
+
 .sync-status {
   display: flex;
   align-items: center;
