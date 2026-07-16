@@ -40,6 +40,10 @@
       غرفة <b id="room-id-label">----</b>
     </div>
 
+    <span class="room-id-pill" id="sync-mode-pill" style="border-style:solid;">
+      <span id="sync-mode-text">…</span>
+    </span>
+
     <div class="room-actions">
       <button class="icon-btn" id="copy-link-btn" title="نسخ رابط الغرفة" aria-label="نسخ رابط الغرفة">🔗</button>
       <a class="icon-btn" href="index.html" title="مغادرة الغرفة" aria-label="مغادرة الغرفة">✕</a>
@@ -100,6 +104,13 @@
         </span>
       </div>
 
+      <div class="net-status-bar" id="mode-badge-row">
+        <span class="ratio-badge" id="mode-badge">
+          <span class="dot"></span>
+          <span id="mode-badge-text">جاهز</span>
+        </span>
+      </div>
+
       <!-- ---------- لوحة إعدادات الاتصال الضعيف (مطوية افتراضيًا) ---------- -->
       <div class="net-settings-panel hidden" id="net-settings-panel">
         <div class="net-settings-row">
@@ -112,6 +123,22 @@
         </div>
 
         <div class="calc-box">
+          <div class="calc-title">للملفات الكبيرة جدًا (فوق ٩٠ ميجا)</div>
+          <div class="calc-note" id="mode-detect-status">
+            سيتم فحص كل رابط MP4 تلقائيًا عند التحميل لاختيار أنسب طريقة تشغيل — لا حاجة لأي إعداد يدوي.
+            الأجزاء المحمَّلة تُحفظ على القرص (IndexedDB) حتى لو رجعت فتحت الصفحة لاحقًا.
+          </div>
+          <button class="btn-mini hidden" id="ffmpeg-hint-btn" type="button">أمر ffmpeg لتحويل الملف لصيغة مجزّأة</button>
+          <div class="calc-result hidden" id="ffmpeg-hint-result"></div>
+
+          <div class="net-settings-row" style="margin-top:6px;">
+            <label>مساحة التخزين المؤقت المستخدمة</label>
+            <span class="cache-usage" id="cache-usage-text">— ميجا</span>
+          </div>
+          <button class="btn-mini" id="clear-cache-btn" type="button">مسح ذاكرة الفيديو المؤقتة</button>
+        </div>
+
+        <div class="calc-box">
           <div class="calc-title">حاسبة الجودة المناسبة لسرعتك</div>
           <div class="net-settings-row">
             <label for="speed-input">سرعتك التقريبية (كيلوبايت/ثانية)</label>
@@ -121,6 +148,8 @@
           <div class="calc-result" id="calc-result"></div>
         </div>
       </div>
+
+      <div class="chunk-progress hidden" id="chunk-progress"></div>
 
       <div class="sync-status">
         <span class="dot"></span>
@@ -159,8 +188,16 @@
 
   <div class="copy-toast" id="copy-toast">تم نسخ رابط الغرفة ✓</div>
 
+  <!-- Firebase (Realtime Database) — للمزامنة الحقيقية بين المستخدمين -->
+  <script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-database-compat.js"></script>
+  <script src="firebase-config.js"></script>
+  <script src="firebase-backend.js"></script>
+
   <!-- HLS.js من CDN لدعم بث M3U8 -->
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js"></script>
+  <!-- مشغّل التحميل المجزّأ المخصص (MSE) للملفات الكبيرة على اتصال بطيء -->
+  <script src="mp4-chunked-player.js"></script>
   <script src="script.js"></script>
 </body>
 </html>
