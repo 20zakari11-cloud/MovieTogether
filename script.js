@@ -47,23 +47,23 @@
   }
 
   /* ======================================================================
-     طبقة تخزين الغرفة (RoomStore)
+     طبقة تخزين الغرفة المحلية (RoomStore) — الوضع الاحتياطي بدون فايربيس
      -----------------------------------------------------------------------
-     تحاكي حاليًا قاعدة بيانات فايربيس عبر localStorage.
-     البنية المخطط لها في Firebase Realtime Database مستقبلًا:
+     تُستخدم فقط إذا لم يُعدّ فايربيس بعد (راجع firebase-config.js). بمجرد
+     ضبط الإعداد، الموقع يستخدم الطبقة الحقيقية بملف firebase-backend.js
+     (window.RoomBackend) بدل هذا الكائن تلقائيًا — بدون أي تعديل إضافي.
+
+     نفس بنية البيانات مطابقة لما هو مطبَّق فعليًا على Firebase Realtime
+     Database بملف firebase-backend.js:
 
        rooms/
          {roomId}/
-           createdAt: number
            video: { url: string, type: 'mp4' | 'hls', updatedAt, updatedBy }
-           playback: { isPlaying: bool, currentTime: number, updatedAt }
+           playback: { isPlaying: bool, currentTime: number, updatedAt, updatedBy }
            viewers/
              {userId}: { name: string, joinedAt: number }
            messages/
-             {messageId}: { userId, name, text, ts }
-
-     كل دالة أدناه هي نقطة الاستبدال المستقبلية بمكافئها في Firebase
-     (مثال: onValue / set / push / onDisconnect...).
+             {messageId}: { type, userId?, name?, text, ts }
      ====================================================================== */
 
   const RoomStore = {
@@ -89,8 +89,6 @@
     /** كتابة كامل بيانات الغرفة */
     write(roomId, data) {
       localStorage.setItem(this._key(roomId), JSON.stringify(data));
-      // TODO(Firebase): استبدال هذا بـ:
-      //   set(ref(db, `rooms/${roomId}`), data)
     },
 
     /** إضافة/تحديث مشاهد في الغرفة */
@@ -98,8 +96,6 @@
       const data = this.read(roomId);
       data.viewers[userId] = { name, joinedAt: data.viewers[userId]?.joinedAt || Date.now() };
       this.write(roomId, data);
-      // TODO(Firebase): set(ref(db, `rooms/${roomId}/viewers/${userId}`), { name, joinedAt })
-      // TODO(Firebase): استخدام onDisconnect(ref) لإزالة المشاهد تلقائيًا عند الخروج
     },
 
     /** إضافة رسالة دردشة جديدة */
@@ -109,7 +105,6 @@
       // الاحتفاظ بآخر 200 رسالة فقط لتفادي تضخم التخزين المحلي
       if (data.messages.length > 200) data.messages = data.messages.slice(-200);
       this.write(roomId, data);
-      // TODO(Firebase): push(ref(db, `rooms/${roomId}/messages`), message)
     },
 
     /** تحديث مصدر الفيديو الحالي للغرفة */
@@ -117,7 +112,6 @@
       const data = this.read(roomId);
       data.video = { url, type, updatedAt: Date.now() };
       this.write(roomId, data);
-      // TODO(Firebase): set(ref(db, `rooms/${roomId}/video`), data.video)
     },
 
     /** تحديث حالة التشغيل (تشغيل/إيقاف/موضع) */
@@ -125,7 +119,6 @@
       const data = this.read(roomId);
       data.playback = { isPlaying, currentTime, updatedAt: Date.now() };
       this.write(roomId, data);
-      // TODO(Firebase): set(ref(db, `rooms/${roomId}/playback`), data.playback)
     }
   };
 
@@ -197,6 +190,13 @@
     const speedInput = document.getElementById('speed-input');
     const calcBtn = document.getElementById('calc-btn');
     const calcResult = document.getElementById('calc-result');
+    const ffmpegHintBtn = document.getElementById('ffmpeg-hint-btn');
+    const ffmpegHintResult = document.getElementById('ffmpeg-hint-result');
+    const chunkProgressEl = document.getElementById('chunk-progress');
+    const modeBadge = document.getElementById('mode-badge');
+    const modeBadgeText = document.getElementById('mode-badge-text');
+    const cacheUsageText = document.getElementById('cache-usage-text');
+    const clearCacheBtn = document.getElementById('clear-cache-btn');
 
     const chatMessagesEl = document.getElementById('chat-messages');
     const chatEmptyEl = document.getElementById('chat-empty');
@@ -210,8 +210,20 @@
 
     let currentUser = null; // { id, name }
     let hlsInstance = null;
+    let chunkedPlayer = null; // ChunkedMp4Player instance عند تفعيل وضع الملفات الكبيرة
     let renderedMessageCount = 0;
     let suppressPlaybackEvents = false; // لتفادي حلقة إعادة بث عند تطبيق تحديثات خارجية
+
+    // هل فايربيس مُعدّ فعليًا؟ إن لا، نستمر بالعمل محليًا عبر localStorage (RoomStore بالأسفل)
+    const useFirebase = !!(window.RoomBackend && window.RoomBackend.isAvailable());
+
+    const syncModeText = document.getElementById('sync-mode-text');
+    if (syncModeText) {
+      syncModeText.textContent = useFirebase ? '🟢 مزامنة حقيقية' : '⚪ وضع محلي (بدون فايربيس)';
+      syncModeText.parentElement.title = useFirebase
+        ? 'متصل بفايربيس — التغييرات تصل لكل من بالغرفة فورًا'
+        : 'لم يُعدّ فايربيس بعد (راجع firebase-config.js) — التجربة محلية بهذا المتصفح فقط';
+    }
 
     /* ---------------------------------------------------------------
        1) تدفق الانضمام إلى الغرفة (إدخال اسم المستخدم)
@@ -242,8 +254,12 @@
 
       currentUser = { id: userId, name };
 
-      // تسجيل المشاهد في الغرفة (طبقة التخزين المؤقتة)
-      RoomStore.upsertViewer(roomId, userId, name);
+      // تسجيل المشاهد في الغرفة (فايربيس إن كان مُعدًّا، وإلا محليًا)
+      if (useFirebase) {
+        window.RoomBackend.joinAsViewer(roomId, userId, name);
+      } else {
+        RoomStore.upsertViewer(roomId, userId, name);
+      }
 
       // رسالة نظام ترحيبية محلية
       addSystemMessage(`${name} انضم إلى الغرفة`);
@@ -262,31 +278,54 @@
        --------------------------------------------------------------- */
 
     function enterRoom() {
+      if (useFirebase) {
+        enterRoomFirebase();
+      } else {
+        enterRoomLocal();
+      }
+    }
+
+    /** وضع المزامنة الحقيقية: اشتراكات فايربيس تستقبل التحديثات لحظيًا */
+    function enterRoomFirebase() {
+      window.RoomBackend.subscribeVideo(roomId, function (video) {
+        if (video && video.url && video.url !== videoUrlInput.value) {
+          videoUrlInput.value = video.url;
+          loadVideoSource(video.url, false);
+        }
+      });
+
+      window.RoomBackend.subscribePlayback(roomId, function (playback) {
+        // تجاهل تحديثاتي أنا نفسي (سبق أن طبّقتها محليًا لحظة الإرسال) لتفادي حلقة مزامنة
+        if (playback.updatedBy === currentUser.id) return;
+        applyRemotePlayback(playback);
+      });
+
+      window.RoomBackend.subscribeViewers(roomId, function (viewers) {
+        renderViewers(viewers);
+      });
+
+      // كل رسالة جديدة تصل فورًا (بما فيها رسائلي أنا، فنعرضها بنفس المسار للجميع)
+      window.RoomBackend.subscribeNewMessages(roomId, function (message) {
+        appendSingleMessage(message);
+      });
+    }
+
+    /** وضع تجريبي محلي (بدون فايربيس): قراءة أولية + محاكاة realtime بين تبويبات نفس المتصفح */
+    function enterRoomLocal() {
       const data = RoomStore.read(roomId);
 
-      // استرجاع مصدر الفيديو المحفوظ (إن وجد) وتحميله
       if (data.video && data.video.url) {
         videoUrlInput.value = data.video.url;
         loadVideoSource(data.video.url, false);
       }
 
-      // استرجاع سجل الدردشة المحفوظ
       renderAllMessages(data.messages || []);
-
-      // استرجاع قائمة المشاهدين
       renderViewers(data.viewers || {});
 
-      // بدء الاستماع للتغييرات القادمة من نوافذ/تبويبات أخرى (محاكاة الوقت الحقيقي)
       window.addEventListener('storage', handleExternalStorageChange);
-
-      // TODO(Firebase): هنا نستبدل حدث "storage" بمستمعي Firebase الحقيقيين:
-      //   onValue(ref(db, `rooms/${roomId}/messages`), snapshot => renderAllMessages(...))
-      //   onValue(ref(db, `rooms/${roomId}/viewers`), snapshot => renderViewers(...))
-      //   onValue(ref(db, `rooms/${roomId}/playback`), snapshot => applyRemotePlayback(...))
-      //   onValue(ref(db, `rooms/${roomId}/video`), snapshot => loadVideoSource(...))
     }
 
-    /** يُستدعى عند أي تغيير في localStorage من تبويب آخر لنفس الغرفة (محاكاة realtime) */
+    /** يُستدعى عند أي تغيير في localStorage من تبويب آخر لنفس الغرفة (محاكاة realtime محليًا فقط) */
     function handleExternalStorageChange(e) {
       if (e.key !== RoomStore._key(roomId)) return;
       const data = RoomStore.read(roomId);
@@ -474,6 +513,74 @@
       };
     }
 
+    function formatMb(bytes) {
+      return (bytes / (1024 * 1024)).toFixed(1);
+    }
+
+    function showChunkProgress(loaded, total) {
+      chunkProgressEl.classList.remove('hidden');
+      const pct = total ? Math.min(100, (loaded / total) * 100) : 0;
+      chunkProgressEl.innerHTML =
+        `تحميل الملف: ${formatMb(loaded)} / ${formatMb(total)} ميجابايت (${pct.toFixed(0)}٪)` +
+        `<div class="track"><div class="fill" style="width:${pct}%"></div></div>`;
+    }
+
+    function hideChunkProgress() {
+      chunkProgressEl.classList.add('hidden');
+      chunkProgressEl.innerHTML = '';
+    }
+
+    function setModeBadge(text, kind) {
+      modeBadge.classList.remove('good', 'bad');
+      if (kind) modeBadge.classList.add(kind);
+      modeBadgeText.textContent = text;
+    }
+
+    /** يشغّل الفيديو بالطريقة العادية (وسم video مباشرة) */
+    function playNatively(url) {
+      videoEl.src = url;
+    }
+
+    /** يحمّل ملف MP4 عبر المشغل المخصص (chunked/MSE)، مع رجوع تلقائي للمشغل العادي عند أي فشل */
+    function loadViaChunkedPlayer(url) {
+      chunkedPlayer = new window.ChunkedMp4Player(videoEl, {
+        onProgress: showChunkProgress,
+        onReady: function () {
+          setModeBadge('🎯 مشغّل التحميل المجزّأ نشط', 'good');
+        },
+        onError: function (message) {
+          setModeBadge('▶️ تشغيل مباشر (تعذّر المشغّل المخصص)', '');
+          hideChunkProgress();
+          if (chunkedPlayer) { chunkedPlayer.destroy(); chunkedPlayer = null; }
+          playNatively(url);
+          startWatchdog();
+        }
+      });
+
+      chunkedPlayer.load(url).catch(function (err) {
+        setModeBadge('▶️ تشغيل مباشر (تعذّر المشغّل المخصص)', '');
+        hideChunkProgress();
+        chunkedPlayer = null;
+        playNatively(url);
+        startWatchdog();
+      });
+    }
+
+    ffmpegHintBtn.addEventListener('click', function () {
+      ffmpegHintResult.classList.toggle('hidden');
+      if (!ffmpegHintResult.classList.contains('hidden')) {
+        ffmpegHintResult.innerHTML =
+          'حوّل أي ملف MP4 عادي إلى صيغة مجزّأة متوافقة (بدون إعادة ترميز، سريع):<br>' +
+          '<code>ffmpeg -i in.mp4 -c copy -movflags frag_keyframe+empty_moov+default_base_moof -f mp4 out.mp4</code><br><br>' +
+          'أو مع إعادة ترميز لدقة 480p (أنسب لسرعتك):<br>' +
+          '<code>ffmpeg -i in.mp4 -vf scale=-2:480 -c:v libx264 -c:a aac -movflags frag_keyframe+empty_moov+default_base_moof -f mp4 out.mp4</code>';
+      }
+    });
+
+    /* -----------------------------------------------------------------
+       تحميل مصدر الفيديو (MP4 أو HLS) مع كشف تلقائي لأنسب طريقة تشغيل
+       ----------------------------------------------------------------- */
+
     function loadVideoSource(url, persist) {
       if (!url) return;
       const type = detectVideoType(url);
@@ -483,35 +590,67 @@
       isAutoPaused = false;
       userWantsToPlay = false;
       hideBufferingOverlay();
+      hideChunkProgress();
+      ffmpegHintBtn.classList.add('hidden');
+      ffmpegHintResult.classList.add('hidden');
 
-      // تفكيك أي جلسة HLS سابقة قبل تحميل مصدر جديد
-      if (hlsInstance) {
-        hlsInstance.destroy();
-        hlsInstance = null;
-      }
+      // تفكيك أي جلسة سابقة (HLS أو المشغل المخصص) قبل تحميل مصدر جديد
+      if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
+      if (chunkedPlayer) { chunkedPlayer.destroy(); chunkedPlayer = null; }
 
       if (type === 'hls') {
+        setModeBadge('📡 بث HLS', 'good');
         if (window.Hls && window.Hls.isSupported()) {
           hlsInstance = new Hls(buildHlsConfig());
           hlsInstance.loadSource(url);
           hlsInstance.attachMedia(videoEl);
         } else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
-          // دعم أصلي (Safari / iOS) — لا يوفر هذا المسار ضبط تخزين مؤقت مخصص
-          videoEl.src = url;
+          playNatively(url); // دعم أصلي (Safari / iOS)
         } else {
           syncStatusText.textContent = 'المتصفح لا يدعم بث M3U8';
           return;
         }
+        emptyState.classList.add('hidden');
+        syncStatusText.textContent = 'تم تحميل الفيديو — جاهز للمشاهدة';
+        startWatchdog();
+      } else if (type === 'mp4' && window.ChunkedMp4Player && window.MediaSource && window.detectFragmentedMp4) {
+        // فحص تلقائي: هل الملف مجزّأ؟ نقرر بناءً على النتيجة بدون أي تدخل من المستخدم
+        setModeBadge('🔍 جارِ فحص الملف…', '');
+        syncStatusText.textContent = 'جارِ فحص بنية الملف لاختيار أنسب طريقة تشغيل…';
+
+        window.detectFragmentedMp4(url).then(function (result) {
+          if (result.fragmented) {
+            loadViaChunkedPlayer(url);
+          } else {
+            setModeBadge('▶️ تشغيل مباشر (الملف غير مجزّأ)', '');
+            syncStatusText.textContent = 'الملف بصيغة MP4 عادية — تم استخدام التشغيل المباشر';
+            ffmpegHintBtn.classList.remove('hidden'); // نتيح تلميح التحويل لمن يريد تفعيل المشغل المخصص لاحقًا
+            playNatively(url);
+          }
+          startWatchdog();
+        }).catch(function () {
+          // تعذّر الفحص (غالبًا CORS أو الخادم لا يدعم Range) — رجوع آمن للتشغيل المباشر
+          setModeBadge('▶️ تشغيل مباشر (تعذّر فحص الملف)', '');
+          syncStatusText.textContent = 'تعذّر فحص الملف تلقائيًا — تم استخدام التشغيل المباشر';
+          playNatively(url);
+          startWatchdog();
+        });
+
+        emptyState.classList.add('hidden');
       } else {
-        videoEl.src = url;
+        setModeBadge('▶️ تشغيل مباشر', '');
+        playNatively(url);
+        emptyState.classList.add('hidden');
+        syncStatusText.textContent = 'تم تحميل الفيديو — جاهز للمشاهدة';
+        startWatchdog();
       }
 
-      emptyState.classList.add('hidden');
-      syncStatusText.textContent = 'تم تحميل الفيديو — جاهز للمشاهدة';
-      startWatchdog();
-
       if (persist) {
-        RoomStore.setVideo(roomId, url, type);
+        if (useFirebase) {
+          window.RoomBackend.setVideo(roomId, url, type, currentUser.id);
+        } else {
+          RoomStore.setVideo(roomId, url, type);
+        }
         addSystemMessage(`${currentUser.name} غيّر الفيديو`);
       }
     }
@@ -522,9 +661,24 @@
       loadVideoSource(url, true);
     });
 
-    // إظهار/إخفاء لوحة إعدادات الاتصال الضعيف
+    // إظهار/إخفاء لوحة إعدادات الاتصال الضعيف + تحديث حجم الكاش المعروض
     netSettingsToggle.addEventListener('click', function () {
       netSettingsPanel.classList.toggle('hidden');
+      if (!netSettingsPanel.classList.contains('hidden') && window.ChunkedMp4Player) {
+        window.ChunkedMp4Player.getCacheUsageMb().then(function (mb) {
+          cacheUsageText.textContent = `${mb} ميجابايت`;
+        }).catch(function () {
+          cacheUsageText.textContent = 'غير متاح';
+        });
+      }
+    });
+
+    clearCacheBtn.addEventListener('click', function () {
+      if (!window.ChunkedMp4Player) return;
+      window.ChunkedMp4Player.clearAllCache().then(function () {
+        cacheUsageText.textContent = '٠ ميجابايت';
+        syncStatusText.textContent = 'تم مسح ذاكرة الفيديو المؤقتة';
+      });
     });
 
     // حاسبة الجودة الموصى بها بناءً على السرعة التقريبية
@@ -548,36 +702,43 @@
         `<code>ffmpeg -i in.mp4 -vf scale=-2:480 -c:v libx264 -b:v ${recommendedKbps}k -c:a aac -b:a 96k out.mp4</code>`;
     });
 
-    /* ---- دوال التزامن المستقبلي للتشغيل (تشغيل/إيقاف/تقديم) ----
-       هذه الدوال جاهزة الآن للعمل محليًا فقط، وستُبَث لبقية المشاهدين
-       عبر Firebase Realtime Database أو WebSocket لاحقًا. */
+    /* ---- مزامنة التشغيل بين المشاهدين (تشغيل/إيقاف/تقديم) ----
+       تُبث عبر فايربيس إن كان مُعدًّا، وإلا تبقى محلية فقط (RoomStore). */
 
     function broadcastPlay(currentTime) {
-      RoomStore.setPlayback(roomId, true, currentTime);
-      // TODO(Firebase/WebSocket): بث حدث "play" مع currentTime للحظة الحالية
-      // socket.emit('play', { roomId, currentTime, ts: Date.now() });
+      if (useFirebase) window.RoomBackend.setPlayback(roomId, true, currentTime, currentUser.id);
+      else RoomStore.setPlayback(roomId, true, currentTime);
     }
 
     function broadcastPause(currentTime) {
-      RoomStore.setPlayback(roomId, false, currentTime);
-      // TODO(Firebase/WebSocket): بث حدث "pause" مع currentTime
-      // socket.emit('pause', { roomId, currentTime, ts: Date.now() });
+      if (useFirebase) window.RoomBackend.setPlayback(roomId, false, currentTime, currentUser.id);
+      else RoomStore.setPlayback(roomId, false, currentTime);
     }
 
     function broadcastSeek(currentTime) {
-      RoomStore.setPlayback(roomId, !videoEl.paused, currentTime);
-      // TODO(Firebase/WebSocket): بث حدث "seek" مع الموضع الجديد
-      // socket.emit('seek', { roomId, currentTime, ts: Date.now() });
+      const isPlaying = !videoEl.paused;
+      if (useFirebase) window.RoomBackend.setPlayback(roomId, isPlaying, currentTime, currentUser.id);
+      else RoomStore.setPlayback(roomId, isPlaying, currentTime);
     }
 
-    /** يُستدعى عند استقبال تحديث تشغيل من مستخدم آخر (مستقبلًا عبر Firebase) */
+    /** يُستدعى عند استقبال تحديث تشغيل من مستخدم آخر — يعوّض زمن الوصول (latency)
+        حتى يبدأ الجميع من نفس اللحظة تقريبًا رغم اختلاف سرعة كل واحد */
     function applyRemotePlayback(playback) {
       suppressPlaybackEvents = true;
-      if (Math.abs(videoEl.currentTime - playback.currentTime) > 1.5) {
-        videoEl.currentTime = playback.currentTime;
+
+      let targetTime = playback.currentTime;
+      if (playback.isPlaying && playback.updatedAt) {
+        const now = useFirebase ? window.RoomBackend.serverNow() : Date.now();
+        const elapsedSinceBroadcast = Math.max(0, (now - playback.updatedAt) / 1000);
+        targetTime = playback.currentTime + elapsedSinceBroadcast;
+      }
+
+      if (Math.abs(videoEl.currentTime - targetTime) > 1.5) {
+        videoEl.currentTime = targetTime;
       }
       if (playback.isPlaying) videoEl.play().catch(() => {});
       else videoEl.pause();
+
       suppressPlaybackEvents = false;
     }
 
@@ -593,6 +754,13 @@
     videoEl.addEventListener('seeked', function () {
       if (suppressPlaybackEvents) return;
       broadcastSeek(videoEl.currentTime);
+    });
+
+    // عند التمرير لموضع غير محمَّل ووضع المشغل المخصص مفعّل — نطلب منه القفز
+    videoEl.addEventListener('seeking', function () {
+      if (chunkedPlayer) {
+        chunkedPlayer.seekTo(videoEl.currentTime).catch(function () {});
+      }
     });
 
     /* ---------------------------------------------------------------
@@ -638,13 +806,23 @@
       return wrap;
     }
 
+    /** يضيف رسالة واحدة فورًا للواجهة — يُستخدم مع اشتراك فايربيس (child_added) */
+    function appendSingleMessage(msg) {
+      if (chatEmptyEl.isConnected) chatEmptyEl.remove();
+      chatMessagesEl.appendChild(buildMessageEl(msg));
+      renderedMessageCount++;
+      chatCountEl.textContent = `${renderedMessageCount} رسالة`;
+      chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+    }
+
     function addSystemMessage(text) {
-      RoomStore.addMessage(roomId, {
-        type: 'system',
-        text,
-        ts: Date.now()
-      });
-      renderAllMessages(RoomStore.read(roomId).messages);
+      const message = { type: 'system', text, ts: Date.now() };
+      if (useFirebase) {
+        window.RoomBackend.sendMessage(roomId, message); // ستصل عبر الاشتراك وتُعرض تلقائيًا
+      } else {
+        RoomStore.addMessage(roomId, message);
+        renderAllMessages(RoomStore.read(roomId).messages);
+      }
     }
 
     function sendChatMessage() {
@@ -659,11 +837,13 @@
         ts: Date.now()
       };
 
-      // TODO(Firebase): استبدال هذا السطر بـ:
-      //   push(ref(db, `rooms/${roomId}/messages`), message)
-      RoomStore.addMessage(roomId, message);
+      if (useFirebase) {
+        window.RoomBackend.sendMessage(roomId, message); // يصل لي وللجميع عبر نفس الاشتراك
+      } else {
+        RoomStore.addMessage(roomId, message);
+        renderAllMessages(RoomStore.read(roomId).messages);
+      }
 
-      renderAllMessages(RoomStore.read(roomId).messages);
       chatInput.value = '';
       chatInput.focus();
     }
