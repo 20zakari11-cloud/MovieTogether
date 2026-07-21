@@ -57,12 +57,13 @@
     <div class="player-col">
 
       <div class="player-wrap" id="player-wrap">
-      <div id="youtube-player-container" class="hidden"></div>
+        <div id="youtube-player-container" class="hidden"></div>
+
 <video id="video-player" controls playsinline></video>
         <div class="player-empty-state" id="player-empty-state">
           <div>
             <div class="ic">🎞️</div>
-            <div>ألصق رابط فيديو (MP4 أو youtube/m3u8) بالأسفل لبدء المشاهدة</div>
+            <div>ألصق رابط فيديو (MP4 أو M3U8) بالأسفل لبدء المشاهدة</div>
           </div>
         </div>
 
@@ -203,7 +204,7 @@
   <div class="copy-toast" id="copy-toast">تم نسخ رابط الغرفة ✓</div>
 
   <!-- Firebase (Realtime Database) — للمزامنة الحقيقية بين المستخدمين -->
-  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
   <script src="firebase-config.js"></script>
   <script src="firebase-backend.js"></script>
@@ -212,10 +213,6 @@
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js"></script>
   <!-- مشغّل التحميل المجزّأ المخصص (MSE) للملفات الكبيرة على اتصال بطيء -->
   <script src="mp4-chunked-player.js"></script>
-
-<!-- YouTube Player API -->
-<script src="https://www.youtube.com/iframe_api"></script>
-
-<script src="script.js"></script>
+  <script src="script.js"></script>
 </body>
 </html>
