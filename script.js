@@ -82,6 +82,8 @@
         video: { url: '', type: '' },
         playback: { isPlaying: false, currentTime: 0, updatedAt: Date.now() },
         viewers: {},
+        buffering: {}, // { userId: { name, updatedAt } } — لعلامة "متعثّر الآن" لكل مشاهد (القفل الجماعي)
+        settings: { slowMode: true }, // إعدادات مشتركة للغرفة كاملة (وضع الاتصال الضعيف إلخ)
         messages: []
       };
     },
@@ -118,6 +120,22 @@
     setPlayback(roomId, isPlaying, currentTime) {
       const data = this.read(roomId);
       data.playback = { isPlaying, currentTime, updatedAt: Date.now() };
+      this.write(roomId, data);
+    },
+
+    /** تحديث علامة "متعثّر الآن" لمستخدم معيّن — للقفل الجماعي محليًا */
+    setBuffering(roomId, userId, name, isBuffering) {
+      const data = this.read(roomId);
+      if (!data.buffering) data.buffering = {};
+      if (isBuffering) data.buffering[userId] = { name, updatedAt: Date.now() };
+      else delete data.buffering[userId];
+      this.write(roomId, data);
+    },
+
+    /** تحديث حالة "وضع الاتصال الضعيف" لكل الغرفة */
+    setSlowMode(roomId, enabled) {
+      const data = this.read(roomId);
+      data.settings = { slowMode: enabled, updatedAt: Date.now() };
       this.write(roomId, data);
     }
   };
@@ -169,10 +187,14 @@
     const joinBtn = document.getElementById('join-btn');
 
     const videoEl = document.getElementById('video-player');
+    const playerWrapEl = document.getElementById('player-wrap');
     const emptyState = document.getElementById('player-empty-state');
     const videoUrlInput = document.getElementById('video-url-input');
     const loadVideoBtn = document.getElementById('load-video-btn');
     const syncStatusText = document.getElementById('sync-status-text');
+    const playerFullscreenBtn = document.getElementById('player-fullscreen-btn');
+    const fullscreenChatToast = document.getElementById('fullscreen-chat-toast');
+    const fullscreenToastText = document.getElementById('fullscreen-toast-text');
 
     // عناصر وضع الاتصال الضعيف
     const bufferingOverlay = document.getElementById('buffering-overlay');
@@ -305,8 +327,21 @@
       });
 
       // كل رسالة جديدة تصل فورًا (بما فيها رسائلي أنا، فنعرضها بنفس المسار للجميع)
+      // ملاحظة: أول اشتراك يُعيد تشغيل كل السجل القديم كدفعة واحدة (سلوك
+      // child_added الطبيعي) — نتجاهل إشعار "رسالة جديدة" خلال أول ثانية
+      // لتفادي عرضه لرسائل قديمة عند الدخول للغرفة
+      let messagesReplaying = true;
       window.RoomBackend.subscribeNewMessages(roomId, function (message) {
-        appendSingleMessage(message);
+        appendSingleMessage(message, messagesReplaying);
+      });
+      setTimeout(function () { messagesReplaying = false; }, 1000);
+
+      // القفل الجماعي: من يتعثّر الآن بالغرفة كلها
+      window.RoomBackend.subscribeBuffering(roomId, handleBufferingMapUpdate);
+
+      // مزامنة تفعيل/إطفاء وضع الاتصال الضعيف لكل الغرفة
+      window.RoomBackend.subscribeSettings(roomId, function (settings) {
+        if (typeof settings.slowMode === 'boolean') applyRemoteSlowMode(settings.slowMode);
       });
     }
 
@@ -321,6 +356,10 @@
 
       renderAllMessages(data.messages || []);
       renderViewers(data.viewers || {});
+      handleBufferingMapUpdate(data.buffering || {});
+      if (data.settings && typeof data.settings.slowMode === 'boolean') {
+        applyRemoteSlowMode(data.settings.slowMode);
+      }
 
       window.addEventListener('storage', handleExternalStorageChange);
     }
@@ -329,8 +368,23 @@
     function handleExternalStorageChange(e) {
       if (e.key !== RoomStore._key(roomId)) return;
       const data = RoomStore.read(roomId);
+      const previousCount = renderedMessageCount;
       renderAllMessages(data.messages || []);
+
+      // إشعار ملء الشاشة لأي رسائل وصلت جديدة منذ آخر مرة (وليست مني أنا)
+      if (data.messages && data.messages.length > previousCount) {
+        data.messages.slice(previousCount).forEach(function (msg) {
+          if (!currentUser || msg.userId !== currentUser.id) {
+            showFullscreenChatToast(msg.type === 'system' ? msg.text : `${msg.name}: ${msg.text}`);
+          }
+        });
+      }
+
       renderViewers(data.viewers || {});
+      handleBufferingMapUpdate(data.buffering || {});
+      if (data.settings && typeof data.settings.slowMode === 'boolean') {
+        applyRemoteSlowMode(data.settings.slowMode);
+      }
 
       if (data.video && data.video.url && data.video.url !== videoUrlInput.value) {
         videoUrlInput.value = data.video.url;
@@ -350,25 +404,70 @@
     /* -----------------------------------------------------------------
        وضع الاتصال الضعيف (Low-Bandwidth Mode)
        -------------------------------------------------------------------
-       فكرته: عدم السماح بالتشغيل إلا بعد تخزين عدد ثوانٍ كافٍ مسبقًا،
-       وإيقاف التشغيل تلقائيًا وإعادة التخزين إذا اقترب المشغل من نفاد
-       ما تم تحميله، بدل أن يتقطّع الفيديو أثناء المشاهدة. كما نقيس نسبة
-       "سرعة التحميل إلى سرعة التشغيل" مباشرة من طول الجزء المخزَّن
-       مؤقتًا (buffered) دون الحاجة لأي طلب شبكة إضافي — وبالتالي يعمل
-       بدقة معقولة حتى مع روابط من خوادم خارجية (CORS). */
+       بداية سريعة (تخزين أولي قصير) بدل انتظار طويل، مع "تراجع تكيّفي":
+       كل مرة يتعثّر التشغيل نرفع هدف إعادة التخزين تدريجيًا (بدل تكرار
+       التوقف كل ثوانٍ قليلة)، وكل فترة تشغيل سليمة نخفّضه تدريجيًا —
+       فيتأقلم النظام مع جودة الاتصال الفعلية بدل رقم ثابت للجميع.
+
+       + قفل جماعي: لو تعثّر الفيديو عند أي شخص بالغرفة أثناء التشغيل،
+       يتوقف عند البقية تلقائيًا لحد ما يلحق، بدل ما ينفرط التزامن. */
 
     let watchdogTimer = null;
     let hasStartedOnce = false;   // هل بدأ التشغيل فعليًا مرة واحدة على الأقل
-    let isAutoPaused = false;     // هل الإيقاف الحالي تسبب به المراقب وليس المستخدم
+    let isAutoPaused = false;     // هل الإيقاف الحالي تسبب به المراقب (تخزين خاص بي) وليس المستخدم
     let userWantsToPlay = false;  // المستخدم ضغط تشغيل وننتظر التخزين قبل التنفيذ
     let lastFrontier = 0;
     let lastFrontierTime = performance.now();
+    let smoothedRatio = null;     // متوسط متحرك لتفادي قفزات مؤشر السرعة
+    let consecutiveStalls = 0;    // عدد مرات التعثر المتتالية — يرفع هدف إعادة التخزين تكيّفيًا
+    let healthyTicks = 0;         // عدد الفحوصات المتتالية بدون تعثر — يخفّض الهدف تدريجيًا لما يستقر الاتصال
+    let reportedBufferingToRoom = false; // آخر حالة أبلغناها لبقية الغرفة (لتفادي إرسال مكرر)
 
-    const LOW_BUFFER_THRESHOLD = 3; // إن قلّ المخزون عن هذا أثناء التشغيل → إيقاف فوري
+    // قفل جماعي بسبب تعثّر شخص آخر (وليس أنا) — تُدار عبر الغرفة كلها
+    let othersBufferingName = null;
+    let isGroupPaused = false;
+
+    const LOW_BUFFER_THRESHOLD = 5;      // إن قلّ المخزون عن هذا أثناء التشغيل → إيقاف فوري (هامش أمان أكبر يمنع تقطيع مرئي قبل الإيقاف)
+    const MAX_ADAPTIVE_TARGET = 45;      // سقف أعلى لهدف إعادة التخزين التكيّفي حتى لا ينتظر بلا داعٍ
 
     function isSlowModeOn() { return slowModeToggle.checked; }
-    function getPrebufferTarget() { return parseFloat(prebufferInput.value) || 25; }
-    function getResumeTarget() { return parseFloat(resumeBufferInput.value) || 12; }
+    function getBasePrebufferTarget() { return parseFloat(prebufferInput.value) || 10; }
+    function getBaseResumeTarget() { return parseFloat(resumeBufferInput.value) || 8; }
+
+    /* ---- مزامنة تفعيل/إطفاء "وضع الاتصال الضعيف" لكل الغرفة ----
+       لو حدا طفّاه، ينطفي عند الباقين أيضًا (والعكس) — قرار جماعي واحد
+       بدل ما كل واحد يضل بإعداد مختلف عن البقية. */
+
+    let suppressSlowModeBroadcast = false; // لتفادي إعادة بث التحديث الذي وصلني للتو من شخص آخر
+
+    function broadcastSlowMode(enabled) {
+      if (useFirebase) {
+        window.RoomBackend.setSlowMode(roomId, enabled, currentUser.id);
+      } else {
+        RoomStore.setSlowMode(roomId, enabled);
+      }
+    }
+
+    /** يُستدعى عند استقبال تحديث لوضع الاتصال الضعيف من شخص آخر بالغرفة */
+    function applyRemoteSlowMode(enabled) {
+      if (slowModeToggle.checked === enabled) return; // نفس القيمة أصلًا — لا داعٍ لأي شيء
+      suppressSlowModeBroadcast = true;
+      slowModeToggle.checked = enabled;
+      suppressSlowModeBroadcast = false;
+      syncStatusText.textContent = enabled
+        ? 'تم تفعيل وضع الاتصال الضعيف من قِبل أحد المشاهدين'
+        : 'تم إيقاف وضع الاتصال الضعيف من قِبل أحد المشاهدين';
+    }
+
+    slowModeToggle.addEventListener('change', function () {
+      if (suppressSlowModeBroadcast) return;
+      broadcastSlowMode(slowModeToggle.checked);
+    });
+
+    /** هدف إعادة التخزين الفعلي بعد تطبيق التكيّف حسب استقرار الاتصال الأخير */
+    function getAdaptiveResumeTarget() {
+      return Math.min(MAX_ADAPTIVE_TARGET, getBaseResumeTarget() + consecutiveStalls * 6);
+    }
 
     /** كمية الثواني المخزّنة أمام موضع التشغيل الحالي مباشرة */
     function getBufferedAhead() {
@@ -404,15 +503,60 @@
 
     function updateRatioBadge(ratio) {
       if (!isFinite(ratio) || ratio < 0) return;
+      smoothedRatio = smoothedRatio === null ? ratio : (smoothedRatio * 0.7 + ratio * 0.3);
       ratioBadge.classList.remove('good', 'bad');
-      if (ratio >= 1.1) {
+      if (smoothedRatio >= 1.1) {
         ratioBadge.classList.add('good');
-        ratioText.textContent = `التحميل أسرع من التشغيل (×${ratio.toFixed(1)})`;
-      } else if (ratio <= 0.85) {
+        ratioText.textContent = `التحميل أسرع من التشغيل (×${smoothedRatio.toFixed(1)})`;
+      } else if (smoothedRatio <= 0.85) {
         ratioBadge.classList.add('bad');
-        ratioText.textContent = `التحميل أبطأ من التشغيل (×${ratio.toFixed(1)}) — يُتوقع تقطيع`;
+        ratioText.textContent = `التحميل أبطأ من التشغيل (×${smoothedRatio.toFixed(1)}) — يُتوقع تقطيع`;
       } else {
-        ratioText.textContent = `التحميل قريب من سرعة التشغيل (×${ratio.toFixed(1)})`;
+        ratioText.textContent = `التحميل قريب من سرعة التشغيل (×${smoothedRatio.toFixed(1)})`;
+      }
+    }
+
+    /** يبلغ بقية الغرفة أن الفيديو تعثّر عندي (أو تعافى) — يُستخدم للقفل الجماعي */
+    function setMyBufferingReport(isBuffering) {
+      if (isBuffering === reportedBufferingToRoom) return;
+      reportedBufferingToRoom = isBuffering;
+      if (useFirebase) {
+        window.RoomBackend.reportBuffering(roomId, currentUser.id, currentUser.name, isBuffering);
+      } else {
+        RoomStore.setBuffering(roomId, currentUser.id, currentUser.name, isBuffering);
+        // نحاكي وصول الحدث للتبويبات الأخرى فورًا (localStorage لا يُطلق storage بنفس التبويب)
+      }
+    }
+
+    /** يُستدعى عند أي تحديث بقائمة "من يتعثّر الآن" بالغرفة كاملة */
+    function handleBufferingMapUpdate(map) {
+      let foundName = null;
+      Object.keys(map || {}).forEach(function (uid) {
+        if (uid !== currentUser.id) foundName = map[uid].name;
+      });
+      othersBufferingName = foundName;
+      syncGroupHoldDisplay();
+    }
+
+    /** يوقف عندي مؤقتًا إن كان شخص آخر متعثرًا، ويستأنف تلقائيًا (عبر مزامنة التشغيل العادية) فور تعافيه */
+    function syncGroupHoldDisplay() {
+      if (isAutoPaused) return; // تعثّري الخاص له الأولوية بالعرض — لا نتدخل فوقه
+
+      if (othersBufferingName) {
+        if (!videoEl.paused) {
+          isGroupPaused = true;
+          suppressPlaybackEvents = true;
+          videoEl.pause();
+          suppressPlaybackEvents = false;
+        } else {
+          isGroupPaused = true;
+        }
+        showBufferingOverlay(`⏸️ بانتظار ${othersBufferingName} — اتصاله بطيء الآن`);
+        bufferBarFill.style.width = '100%';
+        bufferingSub.textContent = 'سيُستأنف العرض تلقائيًا فور جاهزيته لدى الجميع';
+      } else if (isGroupPaused) {
+        isGroupPaused = false;
+        hideBufferingOverlay();
       }
     }
 
@@ -420,7 +564,9 @@
       stopWatchdog();
       lastFrontier = getDownloadFrontier();
       lastFrontierTime = performance.now();
-      watchdogTimer = setInterval(watchdogTick, 1000);
+      consecutiveStalls = 0;
+      healthyTicks = 0;
+      watchdogTimer = setInterval(watchdogTick, 500);
     }
 
     function stopWatchdog() {
@@ -431,13 +577,12 @@
     function watchdogTick() {
       if (!videoEl.src && !videoEl.currentSrc) return;
 
-      // --- قياس نسبة التحميل إلى التشغيل ---
+      // --- قياس نسبة التحميل إلى التشغيل (بمتوسط متحرك لتفادي القفزات) ---
       const now = performance.now();
       const frontier = getDownloadFrontier();
       const dtReal = (now - lastFrontierTime) / 1000;
-      if (dtReal > 0.2) {
-        const ratio = (frontier - lastFrontier) / dtReal;
-        updateRatioBadge(ratio);
+      if (dtReal > 0.4) {
+        updateRatioBadge((frontier - lastFrontier) / dtReal);
         lastFrontier = frontier;
         lastFrontierTime = now;
       }
@@ -449,12 +594,13 @@
 
       const bufferedAhead = getBufferedAhead();
 
-      // المستخدم بانتظار وصول التخزين للحد المطلوب (أولي أو بعد انقطاع)
+      // بانتظار وصول التخزين الخاص بي للحد المطلوب (أولي أو بعد تعثر)
       if (userWantsToPlay && isAutoPaused) {
-        const target = hasStartedOnce ? getResumeTarget() : getPrebufferTarget();
+        const target = hasStartedOnce ? getAdaptiveResumeTarget() : getBasePrebufferTarget();
         updateBufferingProgress(bufferedAhead, target);
         if (bufferedAhead >= target) {
           isAutoPaused = false;
+          setMyBufferingReport(false);
           videoEl.play().catch(() => {});
         }
         return;
@@ -465,22 +611,42 @@
       if (!videoEl.paused && bufferedAhead < LOW_BUFFER_THRESHOLD && !nearEnd) {
         isAutoPaused = true;
         userWantsToPlay = true;
+        consecutiveStalls++;
+        healthyTicks = 0;
+        setMyBufferingReport(true);
         videoEl.pause();
         showBufferingOverlay('إعادة التخزين المؤقت — الاتصال بطيء…');
-        updateBufferingProgress(bufferedAhead, getResumeTarget());
+        updateBufferingProgress(bufferedAhead, getAdaptiveResumeTarget());
+        return;
+      }
+
+      // تشغيل سليم مستمر → نخفّف تدريجيًا من هامش الأمان التكيّفي بعد استقرار كافٍ
+      if (!videoEl.paused && bufferedAhead >= LOW_BUFFER_THRESHOLD) {
+        healthyTicks++;
+        if (healthyTicks > 40 && consecutiveStalls > 0) { // ~20 ثانية تشغيل سليم
+          consecutiveStalls--;
+          healthyTicks = 0;
+        }
       }
     }
 
-    // اعتراض محاولات التشغيل لتطبيق بوّابة التخزين المسبق
+    // اعتراض محاولات التشغيل لتطبيق بوّابة التخزين المسبق + القفل الجماعي
     videoEl.addEventListener('play', function () {
       if (suppressPlaybackEvents) return;
 
+      if (othersBufferingName) {
+        // ما زلنا ننتظر شخصًا آخر بالغرفة — لا نسمح بالتشغيل قبله
+        videoEl.pause();
+        return;
+      }
+
       if (isSlowModeOn()) {
         const bufferedAhead = getBufferedAhead();
-        const needed = hasStartedOnce ? getResumeTarget() : getPrebufferTarget();
+        const needed = hasStartedOnce ? getAdaptiveResumeTarget() : getBasePrebufferTarget();
         if (bufferedAhead < needed) {
           isAutoPaused = true;
           userWantsToPlay = true;
+          if (hasStartedOnce) setMyBufferingReport(true);
           videoEl.pause();
           showBufferingOverlay(hasStartedOnce ? 'إعادة التخزين المؤقت — الاتصال بطيء…' : 'جارِ التجهيز للمشاهدة السلسة…');
           updateBufferingProgress(bufferedAhead, needed);
@@ -491,6 +657,7 @@
       isAutoPaused = false;
       userWantsToPlay = false;
       hasStartedOnce = true;
+      setMyBufferingReport(false);
       hideBufferingOverlay();
       broadcastPlay(videoEl.currentTime);
     });
@@ -589,6 +756,8 @@
       hasStartedOnce = false;
       isAutoPaused = false;
       userWantsToPlay = false;
+      isGroupPaused = false;
+      setMyBufferingReport(false); // لا نترك علامة "متعثّر" عالقة بالغرفة لو بدّلنا الفيديو
       hideBufferingOverlay();
       hideChunkProgress();
       ffmpegHintBtn.classList.add('hidden');
@@ -747,7 +916,7 @@
 
     videoEl.addEventListener('pause', function () {
       if (suppressPlaybackEvents) return;
-      if (isAutoPaused) return; // إيقاف تسبب به المراقب (إعادة تخزين) — لا نبثّه
+      if (isAutoPaused || isGroupPaused) return; // إيقاف تسبب به المراقب أو القفل الجماعي — لا نبثّه
       broadcastPause(videoEl.currentTime);
     });
 
@@ -807,12 +976,16 @@
     }
 
     /** يضيف رسالة واحدة فورًا للواجهة — يُستخدم مع اشتراك فايربيس (child_added) */
-    function appendSingleMessage(msg) {
+    function appendSingleMessage(msg, isReplay) {
       if (chatEmptyEl.isConnected) chatEmptyEl.remove();
       chatMessagesEl.appendChild(buildMessageEl(msg));
       renderedMessageCount++;
       chatCountEl.textContent = `${renderedMessageCount} رسالة`;
       chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+
+      if (!isReplay && (!currentUser || msg.userId !== currentUser.id)) {
+        showFullscreenChatToast(msg.type === 'system' ? msg.text : `${msg.name}: ${msg.text}`);
+      }
     }
 
     function addSystemMessage(text) {
@@ -869,7 +1042,53 @@
     }
 
     /* ---------------------------------------------------------------
-       6) نسخ رابط الغرفة
+       6) ملء الشاشة المخصص + إشعار رسائل الدردشة أثناءه
+       -------------------------------------------------------------------
+       نفتح ملء الشاشة على حاوية المشغل كاملة (player-wrap) وليس على وسم
+       الفيديو مباشرة، حتى تبقى العناصر الأخرى بداخلها (زر ملء الشاشة،
+       شاشة التخزين المؤقت، وإشعار الدردشة) ظاهرة أثناء وضع ملء الشاشة —
+       المتصفح لا يعرض إلا العنصر المطلوب ملؤه وأبناءه فقط.
+       --------------------------------------------------------------- */
+
+    function isPlayerFullscreen() {
+      const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+      return fsEl === playerWrapEl;
+    }
+
+    function toggleFullscreen() {
+      if (isPlayerFullscreen()) {
+        if (document.exitFullscreen) document.exitFullscreen();
+        else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+      } else if (playerWrapEl.requestFullscreen) {
+        playerWrapEl.requestFullscreen();
+      } else if (playerWrapEl.webkitRequestFullscreen) {
+        playerWrapEl.webkitRequestFullscreen(); // Safari / iOS
+      }
+    }
+
+    playerFullscreenBtn.addEventListener('click', toggleFullscreen);
+    document.addEventListener('fullscreenchange', function () {
+      playerFullscreenBtn.textContent = isPlayerFullscreen() ? '⤡' : '⛶';
+    });
+    document.addEventListener('webkitfullscreenchange', function () {
+      playerFullscreenBtn.textContent = isPlayerFullscreen() ? '⤡' : '⛶';
+    });
+
+    let fullscreenToastTimer = null;
+
+    /** إشعار ناعم شبه شفاف بزاوية الشاشة — يظهر فقط إن كان المستخدم بوضع ملء الشاشة */
+    function showFullscreenChatToast(text) {
+      if (!isPlayerFullscreen()) return;
+      fullscreenToastText.textContent = text;
+      fullscreenChatToast.classList.add('show');
+      clearTimeout(fullscreenToastTimer);
+      fullscreenToastTimer = setTimeout(function () {
+        fullscreenChatToast.classList.remove('show');
+      }, 3500);
+    }
+
+    /* ---------------------------------------------------------------
+       7) نسخ رابط الغرفة
        --------------------------------------------------------------- */
 
     copyLinkBtn.addEventListener('click', function () {
