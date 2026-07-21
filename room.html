@@ -57,11 +57,12 @@
     <div class="player-col">
 
       <div class="player-wrap" id="player-wrap">
-        <video id="video-player" controls playsinline></video>
+      <div id="youtube-player-container" class="hidden"></div>
+<video id="video-player" controls playsinline></video>
         <div class="player-empty-state" id="player-empty-state">
           <div>
             <div class="ic">🎞️</div>
-            <div>ألصق رابط فيديو (MP4 أو M3U8) بالأسفل لبدء المشاهدة</div>
+            <div>ألصق رابط فيديو (MP4 أو youtube/m3u8) بالأسفل لبدء المشاهدة</div>
           </div>
         </div>
 
@@ -211,6 +212,10 @@
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js"></script>
   <!-- مشغّل التحميل المجزّأ المخصص (MSE) للملفات الكبيرة على اتصال بطيء -->
   <script src="mp4-chunked-player.js"></script>
-  <script src="script.js"></script>
+
+<!-- YouTube Player API -->
+<script src="https://www.youtube.com/iframe_api"></script>
+
+<script src="script.js"></script>
 </body>
 </html>
