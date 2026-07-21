@@ -747,11 +747,139 @@
     /* -----------------------------------------------------------------
        تحميل مصدر الفيديو (MP4 أو HLS) مع كشف تلقائي لأنسب طريقة تشغيل
        ----------------------------------------------------------------- */
+function getYoutubeId(url) {
+  try {
+    const u = new URL(url);
+
+    if (u.hostname.includes("youtube.com")) {
+      return u.searchParams.get("v");
+    }
+
+    if (u.hostname.includes("youtu.be")) {
+      return u.pathname.substring(1);
+    }
+
+  } catch(e){}
+
+  return null;
+}
+
+
+let youtubePlayer = null;
+
+
+function loadYoutubeSource(videoId) {
+
+  isYoutube = true;
+
+  if (hlsInstance) {
+    hlsInstance.destroy();
+    hlsInstance = null;
+  }
+
+  if (chunkedPlayer) {
+    chunkedPlayer.destroy();
+    chunkedPlayer = null;
+  }
+
+
+  videoEl.style.display = "none";
+
+
+  const container = document.getElementById(
+    "youtube-player-container"
+  );
+
+  container.classList.remove("hidden");
+
+
+  youtubePlayer = new YT.Player(
+    "youtube-player-container",
+    {
+      videoId: videoId,
+
+      playerVars:{
+        autoplay:0,
+        controls:1,
+        rel:0
+      },
+
+
+      events:{
+        onReady:function(){
+
+          syncStatusText.textContent =
+          "تم تحميل YouTube — جاهز للمشاهدة";
+
+          emptyState.classList.add("hidden");
+        },
+
+
+        onStateChange:function(event){
+
+          if(!currentUser) return;
+
+
+          if(event.data === YT.PlayerState.PLAYING){
+
+            if(useFirebase){
+              window.RoomBackend.setPlayback(
+                roomId,
+                true,
+                youtubePlayer.getCurrentTime(),
+                currentUser.id
+              );
+            }
+
+          }
+
+
+          if(event.data === YT.PlayerState.PAUSED){
+
+            if(useFirebase){
+              window.RoomBackend.setPlayback(
+                roomId,
+                false,
+                youtubePlayer.getCurrentTime(),
+                currentUser.id
+              );
+            }
+
+          }
+
+        }
+      }
+    }
+  );
+}
 
     function loadVideoSource(url, persist) {
-      if (!url) return;
-      const type = detectVideoType(url);
+  if (!url) return;
 
+  const youtubeId = getYoutubeId(url);
+
+  if (youtubeId) {
+    loadYoutubeSource(youtubeId);
+
+    if (persist) {
+      if (useFirebase) {
+        window.RoomBackend.setVideo(
+          roomId,
+          url,
+          'youtube',
+          currentUser.id
+        );
+      } else {
+        RoomStore.setVideo(roomId, url, 'youtube');
+      }
+
+      addSystemMessage(`${currentUser.name} غيّر الفيديو`);
+    }
+
+    return;
+  }
+
+  const type = detectVideoType(url);
       // إعادة ضبط حالة مراقب الاتصال الضعيف عند كل تحميل جديد
       hasStartedOnce = false;
       isAutoPaused = false;
