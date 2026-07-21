@@ -767,6 +767,13 @@ function getYoutubeId(url) {
 
 let youtubePlayer = null;
 
+function getYoutubeId(url) {
+  const regex = /(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&]+)/;
+  const match = url.match(regex);
+
+  return match ? match[1] : null;
+}
+
 
 function loadYoutubeSource(videoId) {
 
@@ -781,6 +788,31 @@ function loadYoutubeSource(videoId) {
     chunkedPlayer.destroy();
     chunkedPlayer = null;
   }
+
+  const video = document.getElementById("video-player");
+  video.classList.add("hidden");
+
+  const container = document.getElementById("youtube-player-container");
+  container.classList.remove("hidden");
+
+  youtubePlayer = new YT.Player("youtube-player-container", {
+    videoId: videoId,
+    width: "100%",
+    height: "100%",
+    playerVars: {
+      autoplay: 1,
+      controls: 1
+    },
+    events: {
+      onReady: function() {
+        console.log("YouTube player ready");
+      }
+    }
+  });
+
+  emptyState.classList.add("hidden");
+  syncStatusText.textContent = "تم تحميل فيديو يوتيوب";
+}
 
 
   videoEl.style.display = "none";
@@ -880,6 +912,12 @@ function loadYoutubeSource(videoId) {
   }
 
   const type = detectVideoType(url);
+  const youtubeId = getYoutubeId(url);
+
+if (youtubeId) {
+  loadYoutubeSource(youtubeId);
+  return;
+}
       // إعادة ضبط حالة مراقب الاتصال الضعيف عند كل تحميل جديد
       hasStartedOnce = false;
       isAutoPaused = false;
