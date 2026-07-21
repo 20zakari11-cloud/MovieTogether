@@ -1,496 +1,216 @@
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
-
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-
   <title>غرفة مشاهدة — Movie Together</title>
-
   <link rel="stylesheet" href="style.css">
 </head>
-
-
 <body>
 
+  <!-- ===================== نافذة إدخال الاسم ===================== -->
+  <div class="modal-overlay" id="join-modal">
+    <div class="modal-card">
+      <div class="ticket-code" id="modal-room-code">غرفة #XXXX</div>
+      <h2>انضم إلى الغرفة</h2>
+      <p class="sub">اختر اسمًا يظهر لبقية المشاهدين في الدردشة</p>
 
-<!-- نافذة الاسم -->
-<div class="modal-overlay" id="join-modal">
+      <label class="field-label" for="username-input">اسمك</label>
+      <input
+        class="field-input"
+        id="username-input"
+        type="text"
+        maxlength="20"
+        placeholder="مثال: أحمد"
+        autocomplete="off"
+      >
+      <div class="form-error" id="username-error"></div>
 
-  <div class="modal-card">
+      <button class="btn-primary" id="join-btn" type="button">دخول الغرفة</button>
+    </div>
+  </div>
 
-    <div class="ticket-code" id="modal-room-code">
-      غرفة #XXXX
+  <!-- ===================== رأس الغرفة ===================== -->
+  <header class="room-header">
+    <div class="brand">
+      <span class="brand-mark">🎬</span>
     </div>
 
-    <h2>انضم إلى الغرفة</h2>
+    <div class="room-id-pill">
+      غرفة <b id="room-id-label">----</b>
+    </div>
 
-    <p class="sub">
-      اختر اسمًا يظهر لبقية المشاهدين في الدردشة
-    </p>
-
-
-    <label class="field-label">
-      اسمك
-    </label>
-
-
-    <input
-      class="field-input"
-      id="username-input"
-      type="text"
-      maxlength="20"
-      placeholder="مثال: أحمد"
-      autocomplete="off"
-    >
-
-
-    <div class="form-error" id="username-error"></div>
-
-
-    <button
-      class="btn-primary"
-      id="join-btn"
-      type="button">
-      دخول الغرفة
-    </button>
-
-
-  </div>
-
-</div>
-
-
-
-<!-- رأس الغرفة -->
-
-<header class="room-header">
-
-  <div class="brand">
-    <span class="brand-mark">🎬</span>
-  </div>
-
-
-  <div class="room-id-pill">
-    غرفة <b id="room-id-label">----</b>
-  </div>
-
-
-  <span class="room-id-pill" id="sync-mode-pill">
-
-    <span id="sync-mode-text">
-      …
+    <span class="room-id-pill" id="sync-mode-pill" style="border-style:solid;">
+      <span id="sync-mode-text">…</span>
     </span>
 
-  </span>
+    <div class="room-actions">
+      <button class="icon-btn" id="copy-link-btn" title="نسخ رابط الغرفة" aria-label="نسخ رابط الغرفة">🔗</button>
+      <a class="icon-btn" href="index.html" title="مغادرة الغرفة" aria-label="مغادرة الغرفة">✕</a>
+    </div>
+  </header>
 
+  <!-- ===================== تخطيط الغرفة ===================== -->
+  <div class="room-layout">
 
-  <div class="room-actions">
+    <!-- ---------- عمود المشغل ---------- -->
+    <div class="player-col">
 
-    <button
-      class="icon-btn"
-      id="copy-link-btn">
-      🔗
-    </button>
+      <div class="player-wrap" id="player-wrap">
+        <video id="video-player" controls playsinline></video>
+        <div class="player-empty-state" id="player-empty-state">
+          <div>
+            <div class="ic">🎞️</div>
+            <div>ألصق رابط فيديو (MP4 أو M3U8) بالأسفل لبدء المشاهدة</div>
+          </div>
+        </div>
 
+        <!-- زر ملء الشاشة المخصص — يفتح الحاوية كاملة (وليس الفيديو فقط) حتى
+             تبقى التنبيهات (كرسائل الدردشة) ظاهرة أثناء وضع ملء الشاشة -->
+        <button class="player-fullscreen-btn" id="player-fullscreen-btn" title="ملء الشاشة" aria-label="ملء الشاشة">⛶</button>
 
-    <a
-      class="icon-btn"
-      href="index.html">
-      ✕
-    </a>
+        <!-- إشعار رسالة دردشة جديدة — يظهر فقط أثناء وضع ملء الشاشة -->
+        <div class="fullscreen-chat-toast" id="fullscreen-chat-toast">
+          <span>💬</span>
+          <span id="fullscreen-toast-text"></span>
+        </div>
+
+        <!-- شاشة التخزين المؤقت — تظهر قبل بدء التشغيل وأثناء إعادة التخزين -->
+        <div class="buffering-overlay hidden" id="buffering-overlay">
+          <div class="buffering-box">
+            <div class="spinner"></div>
+            <div class="buffering-label" id="buffering-label">جارِ التخزين المؤقت…</div>
+            <div class="buffer-bar-track">
+              <div class="buffer-bar-fill" id="buffer-bar-fill"></div>
+            </div>
+            <div class="buffering-sub" id="buffering-sub">٠ من ٢٥ ثانية</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="source-bar">
+        <input
+          class="field-input"
+          id="video-url-input"
+          type="text"
+          placeholder="ألصق رابط الفيديو هنا (mp4 / m3u8)…"
+          autocomplete="off"
+        >
+        <button id="load-video-btn" type="button">تحميل</button>
+        <button class="icon-btn" id="net-settings-toggle" title="إعدادات الاتصال الضعيف" aria-label="إعدادات الاتصال الضعيف">⚙️</button>
+      </div>
+
+      <!-- ---------- شريط حالة الشبكة ---------- -->
+      <div class="net-status-bar">
+        <label class="switch-row">
+          <input type="checkbox" id="slow-mode-toggle" checked>
+          <span class="switch-track"><span class="switch-thumb"></span></span>
+          <span class="switch-label">وضع الاتصال الضعيف</span>
+        </label>
+
+        <span class="ratio-badge" id="ratio-badge" title="نسبة سرعة التحميل إلى سرعة التشغيل">
+          <span class="dot" id="ratio-dot"></span>
+          <span id="ratio-text">— جارِ القياس</span>
+        </span>
+      </div>
+
+      <div class="net-status-bar" id="mode-badge-row">
+        <span class="ratio-badge" id="mode-badge">
+          <span class="dot"></span>
+          <span id="mode-badge-text">جاهز</span>
+        </span>
+      </div>
+
+      <!-- ---------- لوحة إعدادات الاتصال الضعيف (مطوية افتراضيًا) ---------- -->
+      <div class="net-settings-panel hidden" id="net-settings-panel">
+        <div class="net-settings-row">
+          <label for="prebuffer-input">التخزين المؤقت قبل بدء التشغيل (ثوانٍ)</label>
+          <input class="field-input small" id="prebuffer-input" type="number" min="3" max="60" step="1" value="10">
+        </div>
+        <div class="net-settings-row">
+          <label for="resume-buffer-input">استئناف التشغيل بعد إعادة التخزين عند (ثوانٍ)</label>
+          <input class="field-input small" id="resume-buffer-input" type="number" min="3" max="30" step="1" value="8">
+        </div>
+        <div class="calc-note">
+          هاي أرقام البداية فقط — لو تكرر التقطيع، الموقع يرفعها تلقائيًا تدريجيًا لحد ما يستقر الاتصال، وكل ما التشغيل يضل سليم لفترة يخفّضها مرة ثانية.
+        </div>
+
+        <div class="calc-box">
+          <div class="calc-title">للملفات الكبيرة جدًا (فوق ٩٠ ميجا)</div>
+          <div class="calc-note" id="mode-detect-status">
+            سيتم فحص كل رابط MP4 تلقائيًا عند التحميل لاختيار أنسب طريقة تشغيل — لا حاجة لأي إعداد يدوي.
+            الأجزاء المحمَّلة تُحفظ على القرص (IndexedDB) حتى لو رجعت فتحت الصفحة لاحقًا.
+          </div>
+          <button class="btn-mini hidden" id="ffmpeg-hint-btn" type="button">أمر ffmpeg لتحويل الملف لصيغة مجزّأة</button>
+          <div class="calc-result hidden" id="ffmpeg-hint-result"></div>
+
+          <div class="net-settings-row" style="margin-top:6px;">
+            <label>مساحة التخزين المؤقت المستخدمة</label>
+            <span class="cache-usage" id="cache-usage-text">— ميجا</span>
+          </div>
+          <button class="btn-mini" id="clear-cache-btn" type="button">مسح ذاكرة الفيديو المؤقتة</button>
+        </div>
+
+        <div class="calc-box">
+          <div class="calc-title">حاسبة الجودة المناسبة لسرعتك</div>
+          <div class="net-settings-row">
+            <label for="speed-input">سرعتك التقريبية (كيلوبايت/ثانية)</label>
+            <input class="field-input small" id="speed-input" type="number" min="20" max="2000" step="10" value="180">
+          </div>
+          <button class="btn-mini" id="calc-btn" type="button">احسب الجودة الموصى بها</button>
+          <div class="calc-result" id="calc-result"></div>
+        </div>
+      </div>
+
+      <div class="chunk-progress hidden" id="chunk-progress"></div>
+
+      <div class="sync-status">
+        <span class="dot"></span>
+        <span id="sync-status-text">جاهز — التزامن مع الآخرين سيُفعَّل عند ربط الخادم</span>
+      </div>
+
+      <div class="viewers-row" id="viewers-row">
+        <!-- تُضاف رقاقات المشاهدين هنا ديناميكيًا -->
+      </div>
+    </div>
+
+    <!-- ---------- عمود الدردشة ---------- -->
+    <aside class="chat-col">
+      <div class="chat-head">
+        <h2>الدردشة</h2>
+        <span class="count" id="chat-count">0 رسالة</span>
+      </div>
+
+      <div class="chat-messages" id="chat-messages">
+        <div class="chat-empty" id="chat-empty">لا رسائل بعد — كن أول من يكتب 👋</div>
+      </div>
+
+      <div class="chat-input-row">
+        <input
+          id="chat-input"
+          type="text"
+          placeholder="اكتب رسالة…"
+          maxlength="300"
+          autocomplete="off"
+        >
+        <button class="chat-send-btn" id="chat-send-btn" type="button" aria-label="إرسال">➤</button>
+      </div>
+    </aside>
 
   </div>
 
-
-</header>
-
-
-
-
-<div class="room-layout">
-
-
-<!-- المشغل -->
-
-<div class="player-col">
-
-
-<div class="player-wrap" id="player-wrap">
-
-  <div id="youtube-player-container" class="hidden"></div>
-
-  <video id="video-player" controls playsinline></video>
-
-
-<!-- YouTube Player -->
-
-<div
-id="youtube-player-container"
-class="hidden">
-</div>
-
-
-
-<!-- MP4 / M3U8 Player -->
-
-<video
-id="video-player"
-controls
-playsinline>
-</video>
-
-
-
-
-<div
-class="player-empty-state"
-id="player-empty-state">
-
-
-<div>
-
-<div class="ic">
-🎞️
-</div>
-
-
-<div>
-ألصق رابط فيديو (MP4 أو M3U8 أو YouTube) بالأسفل
-</div>
-
-
-</div>
-
-
-</div>
-
-
-
-
-
-<button
-class="player-fullscreen-btn"
-id="player-fullscreen-btn">
-
-⛶
-
-</button>
-
-
-
-
-
-<div
-class="fullscreen-chat-toast"
-id="fullscreen-chat-toast">
-
-<span>
-💬
-</span>
-
-<span id="fullscreen-toast-text"></span>
-
-</div>
-
-
-
-
-
-<div
-class="buffering-overlay hidden"
-id="buffering-overlay">
-
-
-<div class="buffering-box">
-
-
-<div class="spinner"></div>
-
-
-<div
-class="buffering-label"
-id="buffering-label">
-
-جارِ التخزين المؤقت…
-
-</div>
-
-
-
-<div class="buffer-bar-track">
-
-<div
-class="buffer-bar-fill"
-id="buffer-bar-fill">
-</div>
-
-</div>
-
-
-
-<div
-class="buffering-sub"
-id="buffering-sub">
-
-٠ من ٢٥ ثانية
-
-</div>
-
-
-</div>
-
-
-</div>
-
-
-
-</div>
-
-
-
-
-
-<div class="source-bar">
-
-
-<input
-class="field-input"
-id="video-url-input"
-type="text"
-placeholder="ألصق رابط الفيديو هنا (mp4 / m3u8 / youtube)"
-autocomplete="off">
-
-
-<button
-id="load-video-btn">
-تحميل
-</button>
-
-
-
-<button
-class="icon-btn"
-id="net-settings-toggle">
-
-⚙️
-
-</button>
-
-
-
-</div>
-
-
-
-
-
-<div class="net-status-bar">
-
-
-<label class="switch-row">
-
-
-<input
-type="checkbox"
-id="slow-mode-toggle"
-checked>
-
-
-<span class="switch-track">
-<span class="switch-thumb"></span>
-</span>
-
-
-<span class="switch-label">
-وضع الاتصال الضعيف
-</span>
-
-
-</label>
-
-
-
-<span
-class="ratio-badge"
-id="ratio-badge">
-
-
-<span
-class="dot"
-id="ratio-dot">
-</span>
-
-
-<span id="ratio-text">
-— جارِ القياس
-</span>
-
-
-</span>
-
-
-</div>
-
-
-
-
-
-<div class="sync-status">
-
-<span class="dot"></span>
-
-<span id="sync-status-text">
-جاهز
-</span>
-
-</div>
-
-
-
-
-<div
-class="viewers-row"
-id="viewers-row">
-
-</div>
-
-
-
-</div>
-
-
-
-
-
-
-<!-- الدردشة -->
-
-
-<aside class="chat-col">
-
-
-<div class="chat-head">
-
-<h2>
-الدردشة
-</h2>
-
-
-<span
-class="count"
-id="chat-count">
-
-0 رسالة
-
-</span>
-
-
-</div>
-
-
-
-<div
-class="chat-messages"
-id="chat-messages">
-
-
-<div
-class="chat-empty"
-id="chat-empty">
-
-لا رسائل بعد — كن أول من يكتب 👋
-
-</div>
-
-
-</div>
-
-
-
-
-
-<div class="chat-input-row">
-
-
-<input
-id="chat-input"
-type="text"
-placeholder="اكتب رسالة…"
-maxlength="300">
-
-
-<button
-id="chat-send-btn">
-
-➤
-
-</button>
-
-
-</div>
-
-
-
-</aside>
-
-
-
-</div>
-
-
-
-
-<div
-class="copy-toast"
-id="copy-toast">
-
-تم نسخ رابط الغرفة ✓
-
-</div>
-
-
-
-
-
-<!-- Firebase -->
-
-    <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
-
-
-<script src="firebase-config.js"></script>
-
-<script src="firebase-backend.js"></script>
-
-
-
-
-<!-- HLS -->
-
-<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js"></script>
-
-
-
-
-<!-- MP4 -->
-
-<script src="mp4-chunked-player.js"></script>
-
-
-
-
-<!-- YouTube -->
-
-<script src="https://www.youtube.com/iframe_api"></script>
-
-
-
-
-<script src="script.js"></script>
-
-
-
+  <div class="copy-toast" id="copy-toast">تم نسخ رابط الغرفة ✓</div>
+
+  <!-- Firebase (Realtime Database) — للمزامنة الحقيقية بين المستخدمين -->
+  <script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/12.15.0/firebase-database-compat.js"></script>
+  <script src="firebase-config.js"></script>
+  <script src="firebase-backend.js"></script>
+
+  <!-- HLS.js من CDN لدعم بث M3U8 -->
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js"></script>
+  <!-- مشغّل التحميل المجزّأ المخصص (MSE) للملفات الكبيرة على اتصال بطيء -->
+  <script src="mp4-chunked-player.js"></script>
+  <script src="script.js"></script>
 </body>
-
 </html>
