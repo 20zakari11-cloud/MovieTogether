@@ -233,7 +233,7 @@
     let currentUser = null; // { id, name }
     let hlsInstance = null;
     let youtubePlayer = null;
-let isYoutube = false;
+    let isYoutube = false;
     let chunkedPlayer = null; // ChunkedMp4Player instance عند تفعيل وضع الملفات الكبيرة
     let renderedMessageCount = 0;
     let suppressPlaybackEvents = false; // لتفادي حلقة إعادة بث عند تطبيق تحديثات خارجية
@@ -791,18 +791,16 @@ function loadYoutubeSource(videoId) {
     chunkedPlayer = null;
   }
 
-  // إخفاء مشغل الفيديو العادي
-  videoEl.classList.add("hidden");
-
-  // إظهار مشغل يوتيوب
-  const container = document.getElementById("youtube-player-container");
-  container.classList.remove("hidden");
-
-  // حذف مشغل يوتيوب قديم إذا موجود
   if (youtubePlayer) {
     youtubePlayer.destroy();
     youtubePlayer = null;
   }
+
+  const video = document.getElementById("video-player");
+  video.classList.add("hidden");
+
+  const container = document.getElementById("youtube-player-container");
+  container.classList.remove("hidden");
 
   youtubePlayer = new YT.Player(
     "youtube-player-container",
@@ -812,44 +810,67 @@ function loadYoutubeSource(videoId) {
       width: "100%",
       height: "100%",
 
-      playerVars: {
-        autoplay: 1,
-        controls: 1,
-        rel: 0
+      playerVars:{
+        autoplay:0,
+        controls:1,
+        rel:0
       },
 
-      events: {
+      events:{
 
-        onReady: function() {
+        onReady:function(){
+
+          emptyState.classList.add("hidden");
+
           syncStatusText.textContent =
           "تم تحميل YouTube — جاهز للمشاهدة";
 
-          emptyState.classList.add("hidden");
         },
 
 
-        onStateChange: function(event) {
+        onStateChange:function(event){
 
-          if (!currentUser) return;
+          if(!currentUser) return;
 
-          if (event.data === YT.PlayerState.PLAYING) {
+          if(event.data === YT.PlayerState.PLAYING){
 
-            if (useFirebase) {
+            if(useFirebase){
+
               window.RoomBackend.setPlayback(
                 roomId,
                 true,
                 youtubePlayer.getCurrentTime(),
                 currentUser.id
               );
-            } else {
-              RoomStore.setPlayback(
-                roomId,
-                true,
-                youtubePlayer.getCurrentTime()
-              );
+
             }
 
           }
+
+
+          if(event.data === YT.PlayerState.PAUSED){
+
+            if(useFirebase){
+
+              window.RoomBackend.setPlayback(
+                roomId,
+                false,
+                youtubePlayer.getCurrentTime(),
+                currentUser.id
+              );
+
+            }
+
+          }
+
+        }
+
+      }
+
+    }
+  );
+
+}
 
 
           if (event.data === YT.PlayerState.PAUSED) {
@@ -887,12 +908,7 @@ function loadYoutubeSource(videoId) {
 
     if (persist) {
       if (useFirebase) {
-        window.RoomBackend.setVideo(
-          roomId,
-          url,
-          'youtube',
-          currentUser.id
-        );
+        window.RoomBackend.setVideo(roomId, url, 'youtube', currentUser.id);
       } else {
         RoomStore.setVideo(roomId, url, 'youtube');
       }
@@ -902,6 +918,10 @@ function loadYoutubeSource(videoId) {
 
     return;
   }
+
+  const type = detectVideoType(url);
+
+  
 
   const type = detectVideoType(url);
   
