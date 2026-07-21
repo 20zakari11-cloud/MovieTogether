@@ -232,13 +232,8 @@
 
     let currentUser = null; // { id, name }
     let hlsInstance = null;
-let chunkedPlayer = null; // ChunkedMp4Player instance عند تفعيل وضع الملفات الكبيرة
-
-// YouTube player
-let youtubePlayer = null;
-let isYoutube = false;
-
-let renderedMessageCount = 0;
+    let chunkedPlayer = null; // ChunkedMp4Player instance عند تفعيل وضع الملفات الكبيرة
+    let renderedMessageCount = 0;
     let suppressPlaybackEvents = false; // لتفادي حلقة إعادة بث عند تطبيق تحديثات خارجية
 
     // هل فايربيس مُعدّ فعليًا؟ إن لا، نستمر بالعمل محليًا عبر localStorage (RoomStore بالأسفل)
@@ -752,79 +747,9 @@ let renderedMessageCount = 0;
     /* -----------------------------------------------------------------
        تحميل مصدر الفيديو (MP4 أو HLS) مع كشف تلقائي لأنسب طريقة تشغيل
        ----------------------------------------------------------------- */
-function getYoutubeId(url) {
-  const regex = /(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&]+)/;
-  const match = url.match(regex);
-
-  return match ? match[1] : null;
-}
-
-
-function loadYoutubeSource(videoId) {
-
-  isYoutube = true;
-
-  if (hlsInstance) {
-    hlsInstance.destroy();
-    hlsInstance = null;
-  }
-
-  if (chunkedPlayer) {
-    chunkedPlayer.destroy();
-    chunkedPlayer = null;
-  }
-
-  videoEl.style.display = "none";
-
-  const container = document.getElementById("youtube-player-container");
-  container.classList.remove("hidden");
-
-  youtubePlayer = new YT.Player(
-    "youtube-player-container",
-    {
-      videoId: videoId,
-      width: "100%",
-      height: "100%",
-      playerVars: {
-        autoplay: 0,
-        controls: 1
-      },
-      events: {
-        onReady: function() {
-          emptyState.classList.add("hidden");
-          syncStatusText.textContent = "تم تحميل فيديو يوتيوب";
-        }
-      }
-    }
-  );
-}
 
     function loadVideoSource(url, persist) {
       if (!url) return;
-
-      const youtubeId = getYoutubeId(url);
-
-      if (youtubeId) {
-        loadYoutubeSource(youtubeId);
-
-        if (persist) {
-          if (useFirebase) {
-            window.RoomBackend.setVideo(
-              roomId,
-              url,
-              'youtube',
-              currentUser.id
-            );
-          } else {
-            RoomStore.setVideo(roomId, url, 'youtube');
-          }
-
-          addSystemMessage(`${currentUser.name} غيّر الفيديو`);
-        }
-
-        return;
-      }
-
       const type = detectVideoType(url);
 
       // إعادة ضبط حالة مراقب الاتصال الضعيف عند كل تحميل جديد
