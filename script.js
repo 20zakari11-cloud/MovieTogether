@@ -232,6 +232,8 @@
 
     let currentUser = null; // { id, name }
     let hlsInstance = null;
+    let youtubePlayer = null;
+let isYoutube = false;
     let chunkedPlayer = null; // ChunkedMp4Player instance عند تفعيل وضع الملفات الكبيرة
     let renderedMessageCount = 0;
     let suppressPlaybackEvents = false; // لتفادي حلقة إعادة بث عند تطبيق تحديثات خارجية
@@ -789,57 +791,36 @@ function loadYoutubeSource(videoId) {
     chunkedPlayer = null;
   }
 
-  const video = document.getElementById("video-player");
-  video.classList.add("hidden");
+  // إخفاء مشغل الفيديو العادي
+  videoEl.classList.add("hidden");
 
+  // إظهار مشغل يوتيوب
   const container = document.getElementById("youtube-player-container");
   container.classList.remove("hidden");
 
-  youtubePlayer = new YT.Player("youtube-player-container", {
-    videoId: videoId,
-    width: "100%",
-    height: "100%",
-    playerVars: {
-      autoplay: 1,
-      controls: 1
-    },
-    events: {
-      onReady: function() {
-        console.log("YouTube player ready");
-      }
-    }
-  });
-
-  emptyState.classList.add("hidden");
-  syncStatusText.textContent = "تم تحميل فيديو يوتيوب";
-}
-
-
-  videoEl.style.display = "none";
-
-
-  const container = document.getElementById(
-    "youtube-player-container"
-  );
-
-  container.classList.remove("hidden");
-
+  // حذف مشغل يوتيوب قديم إذا موجود
+  if (youtubePlayer) {
+    youtubePlayer.destroy();
+    youtubePlayer = null;
+  }
 
   youtubePlayer = new YT.Player(
     "youtube-player-container",
     {
       videoId: videoId,
 
-      playerVars:{
-        autoplay:0,
-        controls:1,
-        rel:0
+      width: "100%",
+      height: "100%",
+
+      playerVars: {
+        autoplay: 1,
+        controls: 1,
+        rel: 0
       },
 
+      events: {
 
-      events:{
-        onReady:function(){
-
+        onReady: function() {
           syncStatusText.textContent =
           "تم تحميل YouTube — جاهز للمشاهدة";
 
@@ -847,33 +828,44 @@ function loadYoutubeSource(videoId) {
         },
 
 
-        onStateChange:function(event){
+        onStateChange: function(event) {
 
-          if(!currentUser) return;
+          if (!currentUser) return;
 
+          if (event.data === YT.PlayerState.PLAYING) {
 
-          if(event.data === YT.PlayerState.PLAYING){
-
-            if(useFirebase){
+            if (useFirebase) {
               window.RoomBackend.setPlayback(
                 roomId,
                 true,
                 youtubePlayer.getCurrentTime(),
                 currentUser.id
               );
+            } else {
+              RoomStore.setPlayback(
+                roomId,
+                true,
+                youtubePlayer.getCurrentTime()
+              );
             }
 
           }
 
 
-          if(event.data === YT.PlayerState.PAUSED){
+          if (event.data === YT.PlayerState.PAUSED) {
 
-            if(useFirebase){
+            if (useFirebase) {
               window.RoomBackend.setPlayback(
                 roomId,
                 false,
                 youtubePlayer.getCurrentTime(),
                 currentUser.id
+              );
+            } else {
+              RoomStore.setPlayback(
+                roomId,
+                false,
+                youtubePlayer.getCurrentTime()
               );
             }
 
@@ -912,12 +904,7 @@ function loadYoutubeSource(videoId) {
   }
 
   const type = detectVideoType(url);
-  const youtubeId = getYoutubeId(url);
-
-if (youtubeId) {
-  loadYoutubeSource(youtubeId);
-  return;
-}
+  
       // إعادة ضبط حالة مراقب الاتصال الضعيف عند كل تحميل جديد
       hasStartedOnce = false;
       isAutoPaused = false;
