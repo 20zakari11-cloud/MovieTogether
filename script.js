@@ -752,6 +752,52 @@ let renderedMessageCount = 0;
     /* -----------------------------------------------------------------
        تحميل مصدر الفيديو (MP4 أو HLS) مع كشف تلقائي لأنسب طريقة تشغيل
        ----------------------------------------------------------------- */
+function getYoutubeId(url) {
+  const regex = /(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&]+)/;
+  const match = url.match(regex);
+
+  return match ? match[1] : null;
+}
+
+
+function loadYoutubeSource(videoId) {
+
+  isYoutube = true;
+
+  if (hlsInstance) {
+    hlsInstance.destroy();
+    hlsInstance = null;
+  }
+
+  if (chunkedPlayer) {
+    chunkedPlayer.destroy();
+    chunkedPlayer = null;
+  }
+
+  videoEl.style.display = "none";
+
+  const container = document.getElementById("youtube-player-container");
+  container.classList.remove("hidden");
+
+  youtubePlayer = new YT.Player(
+    "youtube-player-container",
+    {
+      videoId: videoId,
+      width: "100%",
+      height: "100%",
+      playerVars: {
+        autoplay: 0,
+        controls: 1
+      },
+      events: {
+        onReady: function() {
+          emptyState.classList.add("hidden");
+          syncStatusText.textContent = "تم تحميل فيديو يوتيوب";
+        }
+      }
+    }
+  );
+}
 
     function loadVideoSource(url, persist) {
       if (!url) return;
