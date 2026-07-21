@@ -112,13 +112,47 @@
         (إغلاق التبويب، فقدان الشبكة، إلخ) عبر onDisconnect — أدق بكثير
         من أي محاولة تنظيف يدوية عند إغلاق الصفحة */
     joinAsViewer: function (roomId, userId, name) {
-      const ref = roomRef(roomId, `viewers/${userId}`);
-      ref.set({ name, joinedAt: firebase.database.ServerValue.TIMESTAMP });
-      ref.onDisconnect().remove();
+      const viewerRef = roomRef(roomId, `viewers/${userId}`);
+      viewerRef.set({ name, joinedAt: firebase.database.ServerValue.TIMESTAMP });
+      viewerRef.onDisconnect().remove();
+
+      // لو انقطع اتصاله فجأة وهو مُعلَّم "متعثّر"، لا نترك بقية الغرفة متوقفة إلى الأبد بانتظاره
+      roomRef(roomId, `buffering/${userId}`).onDisconnect().remove();
     },
 
     leaveRoom: function (roomId, userId) {
       return roomRef(roomId, `viewers/${userId}`).remove();
+    },
+
+    /** يبلغ الغرفة أن الفيديو تعثّر (أو تعافى) عند هذا المستخدم — للقفل الجماعي */
+    reportBuffering: function (roomId, userId, name, isBuffering) {
+      const ref = roomRef(roomId, `buffering/${userId}`);
+      if (isBuffering) {
+        ref.set({ name, updatedAt: firebase.database.ServerValue.TIMESTAMP });
+      } else {
+        ref.remove();
+      }
+    },
+
+    subscribeBuffering: function (roomId, cb) {
+      roomRef(roomId, 'buffering').on('value', function (snap) {
+        cb(snap.val() || {});
+      });
+    },
+
+    /** يبث حالة "وضع الاتصال الضعيف" لكل الغرفة — إطفاؤه عند شخص يطفيه عند الجميع */
+    setSlowMode: function (roomId, enabled, userId) {
+      return roomRef(roomId, 'settings').set({
+        slowMode: enabled, updatedBy: userId,
+        updatedAt: firebase.database.ServerValue.TIMESTAMP
+      });
+    },
+
+    subscribeSettings: function (roomId, cb) {
+      roomRef(roomId, 'settings').on('value', function (snap) {
+        const v = snap.val();
+        if (v) cb(v);
+      });
     }
   };
 })();
