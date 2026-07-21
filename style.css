@@ -851,6 +851,65 @@ input, textarea { font-family: inherit; }
   transition: width 0.3s ease;
 }
 
+/* -------------------------------------------------------------------------
+   زر ملء الشاشة المخصص + إشعار الدردشة أثناء ملء الشاشة
+   ------------------------------------------------------------------------- */
+.player-fullscreen-btn {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 15;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: rgba(10, 12, 16, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: var(--text);
+  font-size: 1rem;
+  display: grid;
+  place-items: center;
+  backdrop-filter: blur(3px);
+  transition: background var(--dur) var(--ease);
+}
+
+.player-fullscreen-btn:hover { background: rgba(10, 12, 16, 0.8); }
+
+.fullscreen-chat-toast {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 70%;
+  background: rgba(23, 27, 36, 0.62);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(212, 168, 75, 0.25);
+  color: var(--text);
+  padding: 9px 14px;
+  border-radius: 100px;
+  font-size: 0.82rem;
+  pointer-events: none; /* لا يعيق النقر على عناصر تحكم الفيديو */
+  opacity: 0;
+  transform: translateY(-8px);
+  transition: opacity 0.35s var(--ease), transform 0.35s var(--ease);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.fullscreen-chat-toast span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fullscreen-chat-toast.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .sync-status {
   display: flex;
   align-items: center;
