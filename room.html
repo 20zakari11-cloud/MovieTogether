@@ -58,10 +58,16 @@
 
       <div class="player-wrap" id="player-wrap">
         <video id="video-player" controls playsinline></video>
+
+        <!-- حاوية مشغّل يوتيوب — يظهر بدل وسم الفيديو عند رابط يوتيوب -->
+        <div class="youtube-player-wrap hidden" id="youtube-player-wrap">
+          <div id="youtube-player"></div>
+        </div>
+
         <div class="player-empty-state" id="player-empty-state">
           <div>
             <div class="ic">🎞️</div>
-            <div>ألصق رابط فيديو (MP4 أو M3U8) بالأسفل لبدء المشاهدة</div>
+            <div>ألصق رابط فيديو (MP4، M3U8، أو يوتيوب) بالأسفل لبدء المشاهدة</div>
           </div>
         </div>
 
@@ -93,7 +99,7 @@
           class="field-input"
           id="video-url-input"
           type="text"
-          placeholder="ألصق رابط الفيديو هنا (mp4 / m3u8)…"
+          placeholder="ألصق رابط الفيديو هنا (mp4 / m3u8 / يوتيوب)…"
           autocomplete="off"
         >
         <button id="load-video-btn" type="button">تحميل</button>
@@ -211,6 +217,8 @@
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js"></script>
   <!-- مشغّل التحميل المجزّأ المخصص (MSE) للملفات الكبيرة على اتصال بطيء -->
   <script src="mp4-chunked-player.js"></script>
+  <!-- YouTube IFrame API — لدعم مشاهدة روابط يوتيوب داخل الغرفة -->
+  <script src="https://www.youtube.com/iframe_api"></script>
   <script src="script.js"></script>
 </body>
 </html>
