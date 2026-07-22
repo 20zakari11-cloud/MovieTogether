@@ -13,6 +13,25 @@
   'use strict';
 
   /* ======================================================================
+     جاهزية YouTube IFrame API
+     -----------------------------------------------------------------------
+     السكربت الخارجي (iframe_api) يستدعي هذه الدالة العامة تلقائيًا فور
+     تحميله بالكامل — قد يحدث هذا قبل أو بعد تنفيذ باقي كودنا هون، لذلك
+     نسجّلها بأعلى الملف فورًا ونوفّر طابور استدعاءات ينتظرها لو احتاجها
+     أحد قبل اكتمال التحميل. ====================================================================== */
+  let ytApiReady = false;
+  let ytReadyCallbacks = [];
+  window.onYouTubeIframeAPIReady = function () {
+    ytApiReady = true;
+    ytReadyCallbacks.forEach(function (cb) { cb(); });
+    ytReadyCallbacks = [];
+  };
+  function onceYouTubeApiReady(cb) {
+    if (ytApiReady && window.YT && window.YT.Player) cb();
+    else ytReadyCallbacks.push(cb);
+  }
+
+  /* ======================================================================
      أدوات عامة
      ====================================================================== */
 
@@ -44,6 +63,18 @@
 
   function getQueryParam(name) {
     return new URLSearchParams(window.location.search).get(name);
+  }
+
+  /** يستخرج معرّف فيديو يوتيوب من أي شكل رابط شائع (watch / youtu.be / embed / shorts) */
+  function extractYouTubeId(url) {
+    const m = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+    return m ? m[1] : null;
+  }
+
+  /** يستخرج ثانية البداية من رابط يوتيوب إن وُجدت (?t=90 أو &t=90s) */
+  function extractYouTubeStartSeconds(url) {
+    const m = url.match(/[?&]t=(\d+)/);
+    return m ? parseInt(m[1], 10) : 0;
   }
 
   /* ======================================================================
@@ -236,6 +267,14 @@
     let renderedMessageCount = 0;
     let suppressPlaybackEvents = false; // لتفادي حلقة إعادة بث عند تطبيق تحديثات خارجية
 
+    // مشغّل يوتيوب
+    let ytPlayer = null;
+    let currentPlayerType = 'native'; // 'native' (وسم video) | 'youtube'
+    let suppressYtEvents = false;
+    let ytPollTimer = null;
+    let ytLastKnownTime = 0;
+    const youtubePlayerWrapEl = document.getElementById('youtube-player-wrap');
+
     // هل فايربيس مُعدّ فعليًا؟ إن لا، نستمر بالعمل محليًا عبر localStorage (RoomStore بالأسفل)
     const useFirebase = !!(window.RoomBackend && window.RoomBackend.isAvailable());
 
@@ -397,6 +436,7 @@
        --------------------------------------------------------------- */
 
     function detectVideoType(url) {
+      if (extractYouTubeId(url)) return 'youtube';
       if (/\.m3u8($|\?)/i.test(url)) return 'hls';
       return 'mp4';
     }
@@ -748,6 +788,102 @@
        تحميل مصدر الفيديو (MP4 أو HLS) مع كشف تلقائي لأنسب طريقة تشغيل
        ----------------------------------------------------------------- */
 
+    /* -----------------------------------------------------------------
+       مشغّل يوتيوب (YouTube IFrame API)
+       -------------------------------------------------------------------
+       يوتيوب يدير التخزين المؤقت والجودة بنفسه بخوادمه، فلا علاقة له
+       بوضع الاتصال الضعيف أو المشغّل المخصص أعلاه — فقط نربط أحداث
+       التشغيل/الإيقاف/التقديم بنفس آلية مزامنة الغرفة الموجودة أصلًا. */
+
+    function stopYtPoll() {
+      if (ytPollTimer) clearInterval(ytPollTimer);
+      ytPollTimer = null;
+    }
+
+    /** يراقب دوريًا موضع التشغيل لاكتشاف "تقديم" (لا يوفر يوتيوب حدثًا مباشرًا لهذا) */
+    function startYtPoll() {
+      stopYtPoll();
+      ytLastKnownTime = (ytPlayer && ytPlayer.getCurrentTime) ? ytPlayer.getCurrentTime() : 0;
+      ytPollTimer = setInterval(function () {
+        if (!ytPlayer || suppressYtEvents || typeof ytPlayer.getCurrentTime !== 'function') return;
+        const cur = ytPlayer.getCurrentTime();
+        const isPlaying = ytPlayer.getPlayerState() === YT.PlayerState.PLAYING;
+        const expected = ytLastKnownTime + (isPlaying ? 1 : 0);
+        if (Math.abs(cur - expected) > 1.5) {
+          broadcastSeek(cur); // انحراف كبير عن المتوقع = المستخدم قدّم/رجّع يدويًا
+        }
+        ytLastKnownTime = cur;
+      }, 1000);
+    }
+
+    function handleYtStateChange(event) {
+      if (suppressYtEvents) return;
+      if (event.data === YT.PlayerState.PLAYING) {
+        hasStartedOnce = true;
+        broadcastPlay(ytPlayer.getCurrentTime());
+      } else if (event.data === YT.PlayerState.PAUSED) {
+        broadcastPause(ytPlayer.getCurrentTime());
+      }
+      // BUFFERING / ENDED / CUED: لا نبث شيئًا تلقائيًا هون لتفادي ضجيج غير ضروري
+    }
+
+    /** يفكك مشغّل يوتيوب الحالي تمامًا (عند التبديل لفيديو MP4/HLS) */
+    function destroyYtPlayer() {
+      stopYtPoll();
+      if (ytPlayer && typeof ytPlayer.destroy === 'function') {
+        try { ytPlayer.destroy(); } catch (e) { /* تجاهل */ }
+      }
+      ytPlayer = null;
+      youtubePlayerWrapEl.classList.add('hidden');
+      // destroy() يحذف الـiframe لكن يترك الحاوية فارغة — نعيد بناء عنصر نظيف للمرة القادمة
+      const container = document.getElementById('youtube-player');
+      if (container) {
+        const fresh = document.createElement('div');
+        fresh.id = 'youtube-player';
+        container.replaceWith(fresh);
+      }
+    }
+
+    function createYtPlayer(videoId, startSeconds) {
+      ytPlayer = new YT.Player('youtube-player', {
+        width: '100%',
+        height: '100%',
+        videoId: videoId,
+        playerVars: { rel: 0, modestbranding: 1, playsinline: 1, start: startSeconds || 0 },
+        events: {
+          onReady: function () { startYtPoll(); },
+          onStateChange: handleYtStateChange
+        }
+      });
+    }
+
+    function loadViaYouTube(videoId, startSeconds) {
+      // إيقاف/تفكيك أي مشغّل MP4/HLS شغال حاليًا قبل التبديل ليوتيوب
+      if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
+      if (chunkedPlayer) { chunkedPlayer.destroy(); chunkedPlayer = null; }
+      stopWatchdog();
+      hideBufferingOverlay();
+      hideChunkProgress();
+      videoEl.pause();
+      videoEl.removeAttribute('src');
+      videoEl.load();
+
+      currentPlayerType = 'youtube';
+      youtubePlayerWrapEl.classList.remove('hidden');
+      emptyState.classList.add('hidden');
+      setModeBadge('🎥 يوتيوب — يدير التحميل بنفسه', 'good');
+      syncStatusText.textContent = 'تم تحميل فيديو يوتيوب — جاهز للمشاهدة';
+
+      onceYouTubeApiReady(function () {
+        if (ytPlayer) {
+          ytPlayer.loadVideoById({ videoId: videoId, startSeconds: startSeconds || 0 });
+          startYtPoll();
+        } else {
+          createYtPlayer(videoId, startSeconds);
+        }
+      });
+    }
+
     function loadVideoSource(url, persist) {
       if (!url) return;
       const type = detectVideoType(url);
@@ -767,51 +903,66 @@
       if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
       if (chunkedPlayer) { chunkedPlayer.destroy(); chunkedPlayer = null; }
 
-      if (type === 'hls') {
-        setModeBadge('📡 بث HLS', 'good');
-        if (window.Hls && window.Hls.isSupported()) {
-          hlsInstance = new Hls(buildHlsConfig());
-          hlsInstance.loadSource(url);
-          hlsInstance.attachMedia(videoEl);
-        } else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
-          playNatively(url); // دعم أصلي (Safari / iOS)
-        } else {
-          syncStatusText.textContent = 'المتصفح لا يدعم بث M3U8';
+      if (type === 'youtube') {
+        const videoId = extractYouTubeId(url);
+        if (!videoId) {
+          syncStatusText.textContent = 'تعذّر التعرف على رابط يوتيوب هذا';
           return;
         }
-        emptyState.classList.add('hidden');
-        syncStatusText.textContent = 'تم تحميل الفيديو — جاهز للمشاهدة';
-        startWatchdog();
-      } else if (type === 'mp4' && window.ChunkedMp4Player && window.MediaSource && window.detectFragmentedMp4) {
-        // فحص تلقائي: هل الملف مجزّأ؟ نقرر بناءً على النتيجة بدون أي تدخل من المستخدم
-        setModeBadge('🔍 جارِ فحص الملف…', '');
-        syncStatusText.textContent = 'جارِ فحص بنية الملف لاختيار أنسب طريقة تشغيل…';
-
-        window.detectFragmentedMp4(url).then(function (result) {
-          if (result.fragmented) {
-            loadViaChunkedPlayer(url);
-          } else {
-            setModeBadge('▶️ تشغيل مباشر (الملف غير مجزّأ)', '');
-            syncStatusText.textContent = 'الملف بصيغة MP4 عادية — تم استخدام التشغيل المباشر';
-            ffmpegHintBtn.classList.remove('hidden'); // نتيح تلميح التحويل لمن يريد تفعيل المشغل المخصص لاحقًا
-            playNatively(url);
-          }
-          startWatchdog();
-        }).catch(function () {
-          // تعذّر الفحص (غالبًا CORS أو الخادم لا يدعم Range) — رجوع آمن للتشغيل المباشر
-          setModeBadge('▶️ تشغيل مباشر (تعذّر فحص الملف)', '');
-          syncStatusText.textContent = 'تعذّر فحص الملف تلقائيًا — تم استخدام التشغيل المباشر';
-          playNatively(url);
-          startWatchdog();
-        });
-
-        emptyState.classList.add('hidden');
+        loadViaYouTube(videoId, extractYouTubeStartSeconds(url));
       } else {
-        setModeBadge('▶️ تشغيل مباشر', '');
-        playNatively(url);
-        emptyState.classList.add('hidden');
-        syncStatusText.textContent = 'تم تحميل الفيديو — جاهز للمشاهدة';
-        startWatchdog();
+        // قادمين من فيديو يوتيوب سابق؟ نفكّكه أولًا قبل التبديل لمشغّل عادي
+        if (currentPlayerType === 'youtube') {
+          destroyYtPlayer();
+          currentPlayerType = 'native';
+        }
+
+        if (type === 'hls') {
+          setModeBadge('📡 بث HLS', 'good');
+          if (window.Hls && window.Hls.isSupported()) {
+            hlsInstance = new Hls(buildHlsConfig());
+            hlsInstance.loadSource(url);
+            hlsInstance.attachMedia(videoEl);
+          } else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
+            playNatively(url); // دعم أصلي (Safari / iOS)
+          } else {
+            syncStatusText.textContent = 'المتصفح لا يدعم بث M3U8';
+            return;
+          }
+          emptyState.classList.add('hidden');
+          syncStatusText.textContent = 'تم تحميل الفيديو — جاهز للمشاهدة';
+          startWatchdog();
+        } else if (type === 'mp4' && window.ChunkedMp4Player && window.MediaSource && window.detectFragmentedMp4) {
+          // فحص تلقائي: هل الملف مجزّأ؟ نقرر بناءً على النتيجة بدون أي تدخل من المستخدم
+          setModeBadge('🔍 جارِ فحص الملف…', '');
+          syncStatusText.textContent = 'جارِ فحص بنية الملف لاختيار أنسب طريقة تشغيل…';
+
+          window.detectFragmentedMp4(url).then(function (result) {
+            if (result.fragmented) {
+              loadViaChunkedPlayer(url);
+            } else {
+              setModeBadge('▶️ تشغيل مباشر (الملف غير مجزّأ)', '');
+              syncStatusText.textContent = 'الملف بصيغة MP4 عادية — تم استخدام التشغيل المباشر';
+              ffmpegHintBtn.classList.remove('hidden'); // نتيح تلميح التحويل لمن يريد تفعيل المشغل المخصص لاحقًا
+              playNatively(url);
+            }
+            startWatchdog();
+          }).catch(function () {
+            // تعذّر الفحص (غالبًا CORS أو الخادم لا يدعم Range) — رجوع آمن للتشغيل المباشر
+            setModeBadge('▶️ تشغيل مباشر (تعذّر فحص الملف)', '');
+            syncStatusText.textContent = 'تعذّر فحص الملف تلقائيًا — تم استخدام التشغيل المباشر';
+            playNatively(url);
+            startWatchdog();
+          });
+
+          emptyState.classList.add('hidden');
+        } else {
+          setModeBadge('▶️ تشغيل مباشر', '');
+          playNatively(url);
+          emptyState.classList.add('hidden');
+          syncStatusText.textContent = 'تم تحميل الفيديو — جاهز للمشاهدة';
+          startWatchdog();
+        }
       }
 
       if (persist) {
@@ -885,7 +1036,9 @@
     }
 
     function broadcastSeek(currentTime) {
-      const isPlaying = !videoEl.paused;
+      const isPlaying = currentPlayerType === 'youtube'
+        ? !!(ytPlayer && ytPlayer.getPlayerState && ytPlayer.getPlayerState() === YT.PlayerState.PLAYING)
+        : !videoEl.paused;
       if (useFirebase) window.RoomBackend.setPlayback(roomId, isPlaying, currentTime, currentUser.id);
       else RoomStore.setPlayback(roomId, isPlaying, currentTime);
     }
@@ -893,8 +1046,6 @@
     /** يُستدعى عند استقبال تحديث تشغيل من مستخدم آخر — يعوّض زمن الوصول (latency)
         حتى يبدأ الجميع من نفس اللحظة تقريبًا رغم اختلاف سرعة كل واحد */
     function applyRemotePlayback(playback) {
-      suppressPlaybackEvents = true;
-
       let targetTime = playback.currentTime;
       if (playback.isPlaying && playback.updatedAt) {
         const now = useFirebase ? window.RoomBackend.serverNow() : Date.now();
@@ -902,12 +1053,25 @@
         targetTime = playback.currentTime + elapsedSinceBroadcast;
       }
 
+      if (currentPlayerType === 'youtube') {
+        if (!ytPlayer || typeof ytPlayer.getCurrentTime !== 'function') return;
+        suppressYtEvents = true;
+        if (Math.abs(ytPlayer.getCurrentTime() - targetTime) > 1.5) {
+          ytPlayer.seekTo(targetTime, true);
+        }
+        if (playback.isPlaying) ytPlayer.playVideo();
+        else ytPlayer.pauseVideo();
+        // نمنح أحداث الحالة وقتًا كافيًا لتصل وتُتجاهل قبل رفع الكبح
+        setTimeout(function () { suppressYtEvents = false; }, 500);
+        return;
+      }
+
+      suppressPlaybackEvents = true;
       if (Math.abs(videoEl.currentTime - targetTime) > 1.5) {
         videoEl.currentTime = targetTime;
       }
       if (playback.isPlaying) videoEl.play().catch(() => {});
       else videoEl.pause();
-
       suppressPlaybackEvents = false;
     }
 
