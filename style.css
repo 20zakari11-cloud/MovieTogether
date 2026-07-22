@@ -910,6 +910,19 @@ input, textarea { font-family: inherit; }
   transform: translateY(0);
 }
 
+.youtube-player-wrap {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+}
+
+.youtube-player-wrap.hidden { display: none; }
+
+#youtube-player {
+  width: 100%;
+  height: 100%;
+}
+
 .sync-status {
   display: flex;
   align-items: center;
